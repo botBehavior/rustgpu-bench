@@ -8,5 +8,6 @@
 #![cfg_attr(target_arch = "spirv", no_std)]
 
 pub mod color;
+pub mod gallery;
 pub mod noise;
 pub mod sdf2;

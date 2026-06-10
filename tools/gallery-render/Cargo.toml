@@ -1,0 +1,12 @@
+[package]
+name = "gallery-render"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gpu-shader-lib = { path = "../../shaderlib" }
+glam = { version = ">=0.30.8, <0.31" }
+wgpu = { version = "29", features = ["spirv"] }
+pollster = "0.4"
+bytemuck = "1"
+png = "0.18"

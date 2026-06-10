@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rust Shadertoy — gallery of rust-gpu shaders</title>
+<style>
+  body { font-family: ui-monospace, monospace; background: #0d0e12; color: #e8e8e8;
+         display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px; }
+  .wrap { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; max-width: 1500px; }
+  canvas { border: 1px solid #333; width: min(94vw, 800px); }
+  pre { background: #15161b; border: 1px solid #2a2c33; border-radius: 8px; padding: 12px;
+        font-size: 11px; line-height: 1.45; overflow: auto; max-height: 460px;
+        width: min(94vw, 560px); margin: 0; white-space: pre; color: #c8cdd8; }
+  .thumbs { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .thumbs img { width: 150px; border: 2px solid #333; border-radius: 6px; cursor: pointer; }
+  .thumbs img.sel { border-color: #f74c00; }
+  #status { min-height: 1.2em; font-size: 13px; color: #aaa; }
+  .accent { color: #f74c00; }
+  small { color: #777; max-width: 780px; text-align: center; }
+  a { color: #f74c00; }
+</style>
+</head>
+<body>
+<h3>Rust Shadertoy<span class="accent">.</span> Every shader here is the Rust on the right.</h3>
+<small>
+  Source is <code>gallery.rs</code> from
+  <a href="https://github.com/botBehavior/rustgpu-bench">gpu-shader-lib</a> — ordinary
+  unit-tested Rust (SDFs, FBM noise, palettes), compiled to SPIR-V by rust-gpu, transpiled
+  to WGSL by naga, animated live on your GPU via WebGPU. The exact function shown is also
+  unit-tested on CPU and pixel-gated against this GPU output.
+  <a href="index.html">benchmark demo</a> · <a href="sim.html">slime mold sim</a>
+</small>
+<div class="thumbs" id="thumbs"></div>
+<div id="status">initializing…</div>
+<div class="wrap">
+  <canvas id="canvas" width="800" height="450"></canvas>
+  <pre id="source">loading source…</pre>
+</div>
+
+<script type="module">
+const W = 800, H = 450, CELLS = W * H;
+const NAMES = ["plasma", "amoeba", "clouds", "mandelbrot"];
+const canvas = document.getElementById("canvas");
+const ctx2d = canvas.getContext("2d");
+const status = document.getElementById("status");
+const srcPane = document.getElementById("source");
+let current = 1; // start on the amoeba, obviously
+let gallerySrc = "";
+
+// thumbnails
+const thumbs = document.getElementById("thumbs");
+NAMES.forEach((n, i) => {
+  const img = document.createElement("img");
+  img.src = `gallery/${n}.png`;
+  img.title = n;
+  img.onclick = () => select(i);
+  thumbs.appendChild(img);
+});
+function markSel() {
+  [...thumbs.children].forEach((el, i) => el.classList.toggle("sel", i === current));
+}
+
+function showSource() {
+  if (!gallerySrc) return;
+  const start = gallerySrc.indexOf(`// --- ${NAMES[current]} ---`);
+  const next = gallerySrc.indexOf("// ---", start + 8);
+  srcPane.textContent = start >= 0
+    ? gallerySrc.slice(start, next > 0 ? next : undefined).trim()
+    : gallerySrc;
+}
+
+let gpu = null;
+async function initGpu() {
+  if (gpu) return gpu;
+  if (!navigator.gpu) throw new Error("WebGPU not available in this browser");
+  const code = await (await fetch("./kernels.wgsl")).text();
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error("no WebGPU adapter");
+  const device = await adapter.requestDevice();
+  const module = device.createShaderModule({ code });
+  const pipeline = device.createComputePipeline({
+    layout: "auto",
+    compute: { module, entryPoint: "gallery_cs" },
+  });
+  const params = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  const out = device.createBuffer({ size: CELLS * 12, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const staging = device.createBuffer({ size: CELLS * 12, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const bind = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: params } },
+      { binding: 1, resource: { buffer: out } },
+    ],
+  });
+  gpu = { device, pipeline, params, out, staging, bind };
+  return gpu;
+}
+
+const img = ctx2d.createImageData(W, H);
+let frames = 0, fpsAvg = 0, last = performance.now(), running = false;
+const t0 = performance.now();
+
+async function frame() {
+  const g = await initGpu();
+  g.device.queue.writeBuffer(g.params, 0, new Uint32Array([W, H, (performance.now() - t0) | 0, current]));
+  const enc = g.device.createCommandEncoder();
+  const pass = enc.beginComputePass();
+  pass.setPipeline(g.pipeline);
+  pass.setBindGroup(0, g.bind);
+  pass.dispatchWorkgroups(Math.ceil(W / 8), Math.ceil(H / 8));
+  pass.end();
+  enc.copyBufferToBuffer(g.out, 0, g.staging, 0, CELLS * 12);
+  g.device.queue.submit([enc.finish()]);
+  await g.staging.mapAsync(GPUMapMode.READ);
+  const f32 = new Float32Array(g.staging.getMappedRange());
+  const d = img.data;
+  for (let i = 0; i < CELLS; i++) {
+    d[i * 4] = Math.min(f32[i * 3], 1) * 255.999;
+    d[i * 4 + 1] = Math.min(f32[i * 3 + 1], 1) * 255.999;
+    d[i * 4 + 2] = Math.min(f32[i * 3 + 2], 1) * 255.999;
+    d[i * 4 + 3] = 255;
+  }
+  g.staging.unmap();
+  ctx2d.putImageData(img, 0, 0);
+  frames++;
+  const now = performance.now();
+  fpsAvg = fpsAvg * 0.9 + (1000 / (now - last)) * 0.1;
+  last = now;
+  status.textContent = `${NAMES[current]} · ${fpsAvg.toFixed(0)} fps · rust-gpu → naga → WebGPU`;
+}
+
+async function loop() {
+  if (running) return;
+  running = true;
+  for (;;) {
+    try { await frame(); }
+    catch (e) { status.textContent = "error: " + e.message; console.error(e); break; }
+    await new Promise(requestAnimationFrame);
+  }
+  running = false;
+}
+
+function select(i) {
+  current = i;
+  markSel();
+  showSource();
+}
+
+(async () => {
+  gallerySrc = await (await fetch("./gallery.rs.txt")).text().catch(() => "");
+  select(current);
+  loop();
+})();
+
+// headless verification
+if (new URLSearchParams(location.search).has("auto")) {
+  const beacon = (m) => fetch("/AUTO/" + encodeURIComponent(m)).catch(() => {});
+  (async () => {
+    await new Promise(r => setTimeout(r, 1000));
+    for (let i = 0; i < NAMES.length; i++) {
+      try {
+        select(i);
+        const f0 = frames;
+        const tA = performance.now();
+        while (frames < f0 + 20) await new Promise(r => setTimeout(r, 10));
+        const ms = (performance.now() - tA) / 20;
+        const d = ctx2d.getImageData(400, 225, 1, 1).data;
+        await beacon(`GALLERY ${NAMES[i]} ${ms.toFixed(1)} ms/frame px=${d[0]},${d[1]},${d[2]}`);
+      } catch (e) { await beacon(`GALLERY-ERROR ${NAMES[i]} ${e.message}`); }
+    }
+    await beacon("GALLERY-DONE");
+  })();
+}
+</script>
+</body>
+</html>

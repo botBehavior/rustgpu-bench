@@ -74,6 +74,20 @@ cargo install --locked naga-cli
 python -m http.server 8123 -d web     # open http://localhost:8123
 ```
 
+## Also in this repo
+
+- **The Physarum sim** — [live](https://botbehavior.github.io/rustgpu-bench/sim.html):
+  up to 1M agents, kernels in `shared/src/physarum.rs`, GPU-vs-CPU verified
+  (single-agent trajectories bit-identical; see `runner-native -- --sim`).
+- **`gpu-shader-lib`** (`shaderlib/`) — shader math as an ordinary tested crate: SDFs,
+  noise/FBM, color/tonemapping, plus the gallery shaders. 15 unit tests on CPU; the same
+  code is what runs on the GPU. This is the DX story WGSL can't tell: your shader math
+  has rustdoc, `cargo test`, and a borrow checker.
+- **The Rust Shadertoy gallery** — [live](https://botbehavior.github.io/rustgpu-bench/gallery.html):
+  four launch shaders (plasma, **the amoeba**, clouds, mandelbrot) rendering live on
+  WebGPU next to their verbatim Rust source. Every entry is pixel-gated against its CPU
+  oracle by `tools/gallery-render` (mean diff < 1e-3, typically ~1e-7).
+
 ## Pinned versions
 
 rust-gpu/spirv-std `0.10.0-alpha.1` · `nightly-2026-04-11` (shader crate only; everything
