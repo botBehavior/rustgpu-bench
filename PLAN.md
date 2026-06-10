@@ -191,7 +191,7 @@ and look are Rust source.
 - [x] (2026-06-10 oscilla: 8 chained GPU blocks within 1.46e-5 of CPU oracle, boundaries continuous, visual 2.4e-7; two new subset edges documented: subslicing + array-unsizing don't lower) L2. GPU verify + entries: `synth_audio_cs` (one thread per sample, block-sized
       dispatch), `synth_visual_cs`; runner verification vs CPU rendering of the same
       block (bit-tolerant float gate as established).
-- [ ] L3. `web/synth.html`: QWERTY keyboard → patch state; GPU renders audio blocks
+- [x] (2026-06-10 oscilla 8e66fb4: playable page with worklet ring + honest margin readout; headless rms 0.259/peak 0.459; known perf item = batch blocks per dispatch) L3. `web/synth.html`: QWERTY keyboard → patch state; GPU renders audio blocks
       ahead of the play cursor → readback → AudioWorklet ring buffer; visual kernel
       renders to canvas in the same frame loop; status shows block budget vs deadline
       (the honest metric: GPU audio is about meeting realtime, report it truthfully).
