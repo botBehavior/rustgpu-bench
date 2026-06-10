@@ -160,11 +160,11 @@ by generating pure Rust fns, compiling CPU + SPIR-V, diffing outputs over input 
       Emits batches of 64 fns as a generated shader-crate module + a CPU interpreter
       of the same AST (ground-truth disagreements re-checked by compiling the
       generated source natively with rustc — rustc-CPU is final arbiter).
-- [ ] K2. Harness: cargo-gpu build per batch (~2-3 s), one dispatch per fn over an
+- [x] (2026-06-10: 500 batches / 24k fns / 98M comparisons / 2 findings; ddmin+shrink via --bisect; both minimized standalone) K2. Harness: cargo-gpu build per batch (~2-3 s), one dispatch per fn over an
       input sweep (LCG, 64k pairs), compare vs interpreter; on mismatch: shrink the
       AST (drop nodes while mismatch persists), emit minimized repro .rs + report to
       `fuzz-findings/`. Run a first campaign (≥500 batches / 32k fns); log stats.
-- [ ] K3. Findings triage: each real miscompile/ICE → drafts/ as an upstream issue
+- [x] (2026-06-10: both repros minimized (9 + 15 nodes), shared comparison-fold motif identified, drafts/upstream-miscompile-issue.md awaiting Carter [RED to file]) K3. Findings triage: each real miscompile/ICE → drafts/ as an upstream issue
       draft (RED to file); subset-edge catalog → ANALYSIS.md appendix + cheatsheet.
       Null result is also a result: "32k generated fns, no integer miscompiles" is a
       conformance statement worth posting (RED).
