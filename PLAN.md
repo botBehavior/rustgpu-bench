@@ -154,7 +154,7 @@ Original project #5, v1 = precompiled gallery (no server-side compile).
 Carter-approved 2026-06-10 ("Number two as a base"). Auto-find miscompiles/subset edges
 by generating pure Rust fns, compiling CPU + SPIR-V, diffing outputs over input sweeps.
 
-- [ ] K1. `tools/diff-fuzz`: AST generator for small pure `fn(u32, u32) -> u32`
+- [x] (2026-06-10 bfc13f9: e2e smoke 96 fns / 393k comparisons / 0 findings, ~7s/batch; shrinker deferred until a finding exists to test it) K1. `tools/diff-fuzz`: AST generator for small pure `fn(u32, u32) -> u32`
       functions (integer/bool ops, comparisons, if/select, bounded while, casts —
       bit-exact domain first; f32 with divergence classification is phase 2).
       Emits batches of 64 fns as a generated shader-crate module + a CPU interpreter
@@ -228,4 +228,5 @@ and look are Rust source.
 - 2026-06-10 F3+G1: Phase G (Physarum) green-lit and started; kernels + tests + entries committed (c1947e3). #614: 0 replies yet.
 - 2026-06-10 G2+G3: sim verified GPU-vs-CPU (1-agent bit-identical both paths); web sim live at /sim.html — 256k agents @ 12.4 ms/frame headless-verified, wasm fallback works. Only G4 (publish gate, RED) + E4 + F-watches remain.
 - 2026-06-10 H+I+J phases added (Carter: "complete both" + novel-projects slate after). H1 done (c7025ca): shaderlib with 13 tests, SPIR-V-proven via demo_plasma_cs.
+- 2026-06-10 K1 (bfc13f9): fuzzer e2e; K2 campaign (500 batches, seeds 100..600) launched in background — may need chunked restarts if the 10-min task cap kills it; continue from last reported seed.
 - 2026-06-10 H2–I3 (b952562): gallery shipped — 4 shaders CPU-oracle-gated (3e-8..2e-4), live at /gallery.html (~8 ms/frame headless-verified), source pane shows the actual library Rust. J1 slate drafted. ALL of projects #1-#5 from the original list now built. Remaining: RED gates (E4, G4, crates.io publish) + Carter's pick from novel-projects.md + F-watches.
