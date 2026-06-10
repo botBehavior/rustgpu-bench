@@ -67,14 +67,15 @@ version, which is why it exists.
 
 | target | config | time |
 |---|---|---|
-| Browser GPU (WebGPU, Chrome headless) | 8 spp, incl. first-run pipeline compile | 374 ms |
+| Browser GPU (WebGPU, Chrome headless) | 8 spp, steady-state median of 10 frames | **3.6 ms/frame** (min 2.9) |
+| Browser GPU (WebGPU, Chrome headless) | 8 spp, first frame incl. pipeline compile | 197 ms |
 | Native GPU (Vulkan passthrough) | 32 spp, kernel only | **1.1 ms** |
 | Native CPU (16 threads, rayon) | 32 spp | 205 ms |
 | Browser WASM (1 thread, no bindgen) | 8 spp | ~1.1 s |
 
-Native GPU vs native 16-thread CPU: **~190×**. Vs single-thread WASM: roughly three orders
-of magnitude. That's the whole pitch in one table: the same function, and you choose the
-hardware.
+Native GPU vs native 16-thread CPU: **~190×**. In-browser, GPU steady-state vs
+single-thread WASM (937 ms @ 8 spp, same run): **~260×**. That's the whole pitch in one
+table: the same function, and you choose the hardware.
 
 ## Reproduce
 

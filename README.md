@@ -1,11 +1,16 @@
 # One Rust function, four targets
 
+![GPU render of the test scene](assets/render-gpu.png)
+*This image was rendered by `gpu_shared::render_pixel` running as a Vulkan compute shader.
+The same function, byte-for-byte the same source, renders it on your CPU, in WASM, and on
+WebGPU in a browser.*
+
 A path tracer written once, in ordinary Rust, running verified on:
 
 | target | how | time (800×450, same scene) |
 |---|---|---|
 | Native GPU | [rust-gpu](https://github.com/Rust-GPU/rust-gpu) → SPIR-V → Vulkan (wgpu) | **1.1 ms** @ 32 spp |
-| Browser GPU | rust-gpu → SPIR-V → naga → WGSL → WebGPU | 374 ms first frame incl. compile @ 8 spp |
+| Browser GPU | rust-gpu → SPIR-V → naga → WGSL → WebGPU | **3.6 ms/frame** steady-state @ 8 spp (197 ms first frame incl. compile) |
 | Native CPU | stable rustc + rayon, 16 threads | 205 ms @ 32 spp |
 | Browser CPU | wasm32, raw C ABI, 31 KB module, no bindgen | ~1.1 s @ 8 spp, 1 thread |
 
