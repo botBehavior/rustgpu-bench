@@ -1,5 +1,13 @@
 # Mycelia — the visual-spectacle proof point
 
+> **SUPERSEDED 2026-06-10 by `MYCELIA.md`.** This was the multi-species-physarum version;
+> Carter (a mycologist) redirected to a real adaptive mycelial *ecosystem* (transport solver +
+> foraging + zone lines + life cycle). The physarum work here (S1–S3) was the plumbing
+> rehearsal and stands as a simpler sibling. See `MYCELIA.md` for the live plan.
+
+---
+
+
 **Chosen 2026-06-10** (Carter: "Massive visual spectacle") as the web-supremacy proof point,
 after the rust-gpu compiler-contribution path was retired. Max-effort build.
 
