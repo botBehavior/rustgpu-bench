@@ -228,6 +228,31 @@ product: visuals-first, full-bleed, always alive; controls performable; export t
 - [~] (2026-06-10 v3 c67b2c9 after Carter's retest found distortion + weak visuals: ROOT-CAUSED ring-lap corruption (stale buffered-report → overfill → write laps read) — now exact AudioContext-clock accounting; visuals rebuilt as polar nebula + circular scope ring + feedback trails (react 3.55×, trails 1.41×/frame). Redeployed — AWAITING CARTER RETEST #2) M3. Headless verify (reactivity beacon: silent-vs-playing pixel delta),
       redeploy Pages, commit; Carter retest gate — his ears decide, not the beacons.
 
+## Phase N — oscilla reimagined (Carter 2026-06-10: "rethink the entire program ...
+## reimagine the showcase"; after v3 retest: "awful sound and no visuals")
+
+Architecture verdict: GPU-audio-via-readback is structurally fragile (every block
+crosses GPU→CPU→JS→worklet against a 2.7ms deadline). Reimagined: one Rust source,
+each processor doing what it's unbeatable at — audio in WASM inside the worklet
+thread (transport-free, distortion structurally impossible), visuals as a rust-gpu
+FRAGMENT shader rendering directly to the WebGPU canvas (no readback, native-res
+60fps, true trail textures). M3 marked failed; v1-v3 audio path retired.
+
+- [x] (2026-06-10 oscilla 96464ba: 13KB wasm engine in-worklet, 0.14 ms/block = 19× realtime headroom, zero transport; hot-swap swaps the engine live; no-store asset fetches kill version skew) N1. WASM audio engine: compile oscilla-synth to wasm32 (raw C ABI exports:
+      params_set, voice_on/off, render(out_ptr, cursor)); AudioWorkletProcessor
+      instantiates the module from bytes passed via processorOptions and calls
+      render() inside process() — samples never leave the audio thread. Worklet
+      posts level/waveform/features to main thread for visuals. Headless beacon:
+      N blocks rendered in-worklet, rms/peak sane, zero transport in the path.
+- [ ] N2. Fragment visuals: rust-gpu vertex (fullscreen triangle) + fragment entry
+      (visual_v3 evolved) → WebGPU render pipeline on the canvas at devicePixelRatio
+      resolution; audio features via uniform buffer, waveform via storage buffer;
+      trails via ping-ponged offscreen textures (render→texture, sample as prev).
+      First fragment-stage shader through our rust-gpu→naga path — verify + note edges.
+- [ ] N3. Reassemble the instrument (piano/XY/MIDI/drawer/hot-swap intact), kill all
+      readback paths, headless verify (audio beacons + visual reactivity), redeploy,
+      Carter retest #3.
+
 ## Approvals (Carter writes lines here, e.g. `approved: E1 name=rustgpu-bench 2026-06-11`)
 
 - approved: L0 name=oscilla (Carter in chat 2026-06-10: "oscilla is a bold name, let's make it a bold project") — repo botBehavior/oscilla, create public when Phase K is complete
