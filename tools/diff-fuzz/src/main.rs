@@ -663,8 +663,335 @@ fn bisect(seed: u32, fn_idx: usize, root: &std::path::Path, gpu: &GpuCtx) {
     println!("target fn: {tsrc}");
 }
 
+// ======================= FLOAT DOMAIN (P2) =======================
+// f32 arithmetic can't be bit-exact-compared: fma-contraction and rounding make
+// the GPU legitimately differ from the CPU by a few ULP. The classifier flags
+// only divergence FAR beyond that (a real miscompile drops a term or picks the
+// wrong op — millions of ULP / wrong magnitude). Transcendentals are excluded
+// in v1: their precision is driver-defined, so they'd be all false positives.
+// Inputs are kept finite/normal and derived by the SAME `to_f32` on both sides;
+// any input where either side reaches inf/NaN is skipped (can't classify).
+
+// A genuine float miscompile diverges grossly across MOST inputs; legitimate
+// fma/rounding/cancellation divergence is small or input-sparse. So classify
+// per-function: flag only when a large FRACTION of inputs exceed a generous
+// RELATIVE threshold. (ULP and per-input thresholds drown in false positives —
+// measured: normal rounding reaches ~1e-3 relative, cancellation spikes higher
+// but only on a few unlucky inputs.)
+const REL_THRESHOLD: f32 = 1e-2; // 1% relative — ~10x over normal rounding noise
+const FLAG_FRACTION: f32 = 0.25; // >25% of inputs diverging => systematic, a finding
+
+#[derive(Clone, Debug)]
+enum FNode {
+    X,
+    Y,
+    C(u32), // reinterpreted through to_f32 so constants share the input range
+    Add(Box<FNode>, Box<FNode>),
+    Sub(Box<FNode>, Box<FNode>),
+    Mul(Box<FNode>, Box<FNode>),
+    Div(Box<FNode>, Box<FNode>),
+    Neg(Box<FNode>),
+    Abs(Box<FNode>),
+    Min(Box<FNode>, Box<FNode>),
+    Max(Box<FNode>, Box<FNode>),
+    Fma(Box<FNode>, Box<FNode>, Box<FNode>), // a*b + c (contraction-prone)
+    Sel(Box<FNode>, Box<FNode>, Box<FNode>, Box<FNode>), // if a < b { t } else { f }
+    Loop(Box<FNode>, u32),                   // acc = e; k times: acc = acc*0.5 + e
+}
+
+/// u32 -> finite normal f32 in ±[~0.008, ~512); identical on CPU and GPU.
+fn to_f32(u: u32) -> f32 {
+    let sign = u & 0x8000_0000;
+    let mant = u & 0x007F_FFFF;
+    let exp = (120 + ((u >> 23) & 0xF)) << 23; // biased exp 120..135 -> 2^-7..2^8
+    f32::from_bits(sign | exp | mant)
+}
+
+fn fgen(rng: &mut Rng, depth: u32) -> FNode {
+    use FNode::*;
+    if depth >= MAX_DEPTH || rng.below(100) < 20 {
+        return match rng.below(3) {
+            0 => X,
+            1 => Y,
+            _ => C(rng.next()),
+        };
+    }
+    macro_rules! a {
+        () => {
+            Box::new(fgen(rng, depth + 1))
+        };
+    }
+    match rng.below(12) {
+        0 => Add(a!(), a!()),
+        1 => Sub(a!(), a!()),
+        2 => Mul(a!(), a!()),
+        3 => Div(a!(), a!()),
+        4 => Neg(a!()),
+        5 => Abs(a!()),
+        6 => Min(a!(), a!()),
+        7 => Max(a!(), a!()),
+        8 => Fma(a!(), a!(), a!()),
+        9 | 10 => Sel(a!(), a!(), a!(), a!()),
+        _ => Loop(a!(), 1 + rng.below(6)),
+    }
+}
+
+fn femit(n: &FNode, out: &mut String) {
+    use FNode::*;
+    match n {
+        X => out.push('x'),
+        Y => out.push('y'),
+        C(v) => {
+            let _ = write!(out, "to_f32({v}u32)");
+        }
+        Add(a, b) => {
+            out.push('(');
+            femit(a, out);
+            out.push_str(" + ");
+            femit(b, out);
+            out.push(')');
+        }
+        Sub(a, b) => {
+            out.push('(');
+            femit(a, out);
+            out.push_str(" - ");
+            femit(b, out);
+            out.push(')');
+        }
+        Mul(a, b) => {
+            out.push('(');
+            femit(a, out);
+            out.push_str(" * ");
+            femit(b, out);
+            out.push(')');
+        }
+        Div(a, b) => {
+            out.push('(');
+            femit(a, out);
+            out.push_str(" / ");
+            femit(b, out);
+            out.push(')');
+        }
+        Neg(a) => {
+            out.push_str("(-");
+            femit(a, out);
+            out.push(')');
+        }
+        Abs(a) => {
+            femit(a, out);
+            out.push_str(".abs()");
+        }
+        Min(a, b) => {
+            femit(a, out);
+            out.push_str(".min(");
+            femit(b, out);
+            out.push(')');
+        }
+        Max(a, b) => {
+            femit(a, out);
+            out.push_str(".max(");
+            femit(b, out);
+            out.push(')');
+        }
+        Fma(a, b, c) => {
+            out.push('(');
+            femit(a, out);
+            out.push_str(" * ");
+            femit(b, out);
+            out.push_str(" + ");
+            femit(c, out);
+            out.push(')');
+        }
+        Sel(a, b, t, f) => {
+            out.push_str("(if ");
+            femit(a, out);
+            out.push_str(" < ");
+            femit(b, out);
+            out.push_str(" { ");
+            femit(t, out);
+            out.push_str(" } else { ");
+            femit(f, out);
+            out.push_str(" })");
+        }
+        Loop(e, k) => {
+            out.push_str("({ let e = ");
+            femit(e, out);
+            let _ = write!(out, "; let mut acc = e; let mut i = 0u32; while i < {k}u32 {{ acc = acc * 0.5f32 + e; i += 1; }} acc }})");
+        }
+    }
+}
+
+fn finterp(n: &FNode, x: f32, y: f32) -> f32 {
+    use FNode::*;
+    let e = |m: &FNode| finterp(m, x, y);
+    match n {
+        X => x,
+        Y => y,
+        C(v) => to_f32(*v),
+        Add(a, b) => e(a) + e(b),
+        Sub(a, b) => e(a) - e(b),
+        Mul(a, b) => e(a) * e(b),
+        Div(a, b) => e(a) / e(b),
+        Neg(a) => -e(a),
+        Abs(a) => e(a).abs(),
+        Min(a, b) => e(a).min(e(b)),
+        Max(a, b) => e(a).max(e(b)),
+        Fma(a, b, c) => e(a) * e(b) + e(c),
+        Sel(a, b, t, f) => {
+            if e(a) < e(b) {
+                e(t)
+            } else {
+                e(f)
+            }
+        }
+        Loop(en, k) => {
+            let ev = e(en);
+            let mut acc = ev;
+            let mut i = 0u32;
+            while i < *k {
+                acc = acc * 0.5 + ev;
+                i += 1;
+            }
+            acc
+        }
+    }
+}
+
+fn fsize(n: &FNode) -> u32 {
+    use FNode::*;
+    match n {
+        X | Y | C(_) => 1,
+        Neg(a) | Abs(a) | Loop(a, _) => 1 + fsize(a),
+        Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Min(a, b) | Max(a, b) => {
+            1 + fsize(a) + fsize(b)
+        }
+        Fma(a, b, c) => 1 + fsize(a) + fsize(b) + fsize(c),
+        Sel(a, b, t, f) => 1 + fsize(a) + fsize(b) + fsize(t) + fsize(f),
+    }
+}
+
+fn write_batch_float(fns: &[FNode], dir: &std::path::Path) {
+    let mut src = String::from(
+        "//! REGENERATED BY tools/diff-fuzz --float — do not edit by hand.\n#![no_std]\n#![allow(unused_parens, unused_variables, clippy::all)]\n\nuse spirv_std::glam::UVec3;\nuse spirv_std::spirv;\n\n",
+    );
+    src.push_str("fn lcg(s: u32) -> u32 { s.wrapping_mul(1664525).wrapping_add(1013904223) }\n");
+    src.push_str("fn to_f32(u: u32) -> f32 { let sign = u & 0x80000000u32; let mant = u & 0x007FFFFFu32; let exp = (120u32 + ((u >> 23) & 0xFu32)) << 23u32; f32::from_bits(sign | exp | mant) }\n\n");
+    for (i, f) in fns.iter().enumerate() {
+        let _ = write!(src, "pub fn f_{i}(x: f32, y: f32) -> f32 {{ ");
+        femit(f, &mut src);
+        src.push_str(" }\n");
+    }
+    // result f32 stored as raw bits in a u32 buffer
+    src.push_str("\n#[spirv(compute(threads(8, 8)))]\npub fn fuzz_cs(\n    #[spirv(global_invocation_id)] id: UVec3,\n    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &[u32; 4],\n    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] out: &mut [u32],\n) {\n    let ii = id.x;\n    let fi = id.y;\n    if ii >= params[0] || fi >= params[1] { return; }\n    let x = to_f32(lcg(params[2] ^ ii));\n    let y = to_f32(lcg(lcg(params[2] ^ ii)));\n    let v = match fi {\n");
+    for i in 0..fns.len() {
+        let _ = write!(src, "        {i} => f_{i}(x, y),\n");
+    }
+    src.push_str("        _ => 0.0f32,\n    };\n    out[(fi * params[0] + ii) as usize] = v.to_bits();\n}\n");
+    std::fs::write(dir.join("src/lib.rs"), src).expect("write generated float lib.rs");
+}
+
+fn run_float_campaign(batches: u32, seed0: u32, root: &std::path::Path, gpu: &GpuCtx) {
+    let fuzz_dir = root.join("fuzz-shaders");
+    let spv_path = fuzz_dir.join("spv/fuzz_shaders.spv");
+    let findings_dir = root.join("fuzz-findings");
+    std::fs::create_dir_all(&findings_dir).ok();
+    let t0 = Instant::now();
+    let mut total_cmp = 0u64;
+    let mut skipped = 0u64;
+    let mut findings = 0u32;
+    let mut worst_frac_below = 0.0f32; // largest exceed-fraction among non-flagged fns
+
+    for batch in 0..batches {
+        let seed = seed0.wrapping_add(batch);
+        let mut rng = Rng(if seed == 0 { 0xDEAD_BEEF } else { lcg(seed) });
+        let fns: Vec<FNode> = (0..N_FNS).map(|_| fgen(&mut rng, 0)).collect();
+        write_batch_float(&fns, &fuzz_dir);
+        let ok = Command::new("cargo")
+            .args(["gpu", "build", "--shader-crate", fuzz_dir.to_str().unwrap(),
+                   "--output-dir", fuzz_dir.join("spv").to_str().unwrap(),
+                   "--auto-install-rust-toolchain"])
+            .current_dir(root)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !ok {
+            println!("batch seed {seed}: COMPILE FAIL (float)");
+            findings += 1;
+            continue;
+        }
+        let spv = std::fs::read(&spv_path).expect("read float spv");
+        let raw = run_gpu(gpu, &spv, seed, fns.len() as u32);
+        for (fi, f) in fns.iter().enumerate() {
+            let mut finite = 0u32;
+            let mut exceed = 0u32;
+            let mut worst_rel = 0.0f32;
+            let mut worst_in: (u32, u32, f32, f32) = (0, 0, 0.0, 0.0); // xbits, ybits, cpu, gpu
+            for ii in 0..N_INPUTS {
+                let xb = lcg(seed ^ ii);
+                let yb = lcg(xb);
+                let cpu = finterp(f, to_f32(xb), to_f32(yb));
+                let gpu_v = f32::from_bits(raw[fi * N_INPUTS as usize + ii as usize]);
+                if !cpu.is_finite() || !gpu_v.is_finite() {
+                    skipped += 1;
+                    continue;
+                }
+                finite += 1;
+                let rel = (cpu - gpu_v).abs() / cpu.abs().max(gpu_v.abs()).max(1e-30);
+                if rel > REL_THRESHOLD {
+                    exceed += 1;
+                    if rel > worst_rel {
+                        worst_rel = rel;
+                        worst_in = (xb, yb, cpu, gpu_v);
+                    }
+                }
+            }
+            total_cmp += finite as u64;
+            if finite == 0 {
+                continue;
+            }
+            let frac = exceed as f32 / finite as f32;
+            if frac > FLAG_FRACTION {
+                findings += 1;
+                let (xb, yb, cpu, gpu_v) = worst_in;
+                let mut body = String::new();
+                femit(f, &mut body);
+                let path = findings_dir.join(format!("fmismatch-seed{seed}-fn{fi}.rs"));
+                let mut repro = String::new();
+                let _ = writeln!(repro, "// SYSTEMATIC FLOAT DIVERGENCE seed={seed} fn={fi}");
+                let _ = writeln!(repro, "// {exceed}/{finite} finite inputs exceed {REL_THRESHOLD:e} relative error (frac {frac:.2})");
+                let _ = writeln!(repro, "// worst: x_bits={xb:#x} y_bits={yb:#x} cpu={cpu:e} gpu={gpu_v:e} rel={worst_rel:e}");
+                let _ = writeln!(repro, "// native rustc runs repro on the same to_f32 inputs; it is the arbiter.");
+                repro.push_str("fn to_f32(u: u32) -> f32 { let sign=u&0x80000000; let mant=u&0x007FFFFF; let exp=(120+((u>>23)&0xF))<<23; f32::from_bits(sign|exp|mant) }\n");
+                let _ = writeln!(repro, "pub fn repro(x: f32, y: f32) -> f32 {{ {body} }}");
+                let _ = writeln!(repro, "fn main() {{ let c = repro(to_f32({xb}u32), to_f32({yb}u32)); println!(\"cpu={{c:e}} expected_gpu={gpu_v:e}\"); }}");
+                std::fs::write(&path, repro).ok();
+                println!("batch seed {seed} fn {fi}: SYSTEMATIC float divergence {exceed}/{finite} inputs (worst rel {worst_rel:e}) -> {}", path.display());
+            } else if worst_rel > 0.0 && frac > worst_frac_below {
+                worst_frac_below = frac;
+            }
+        }
+        if batch % 5 == 4 || batches <= 3 {
+            println!("[{:>5.1}s] {} batches, {} cmp, {} skipped(non-finite), {} findings, worst-OK-frac {:.3}",
+                t0.elapsed().as_secs_f32(), batch + 1, total_cmp, skipped, findings, worst_frac_below);
+        }
+    }
+    println!("FLOAT DONE: {batches} batches / {total_cmp} comparisons / {skipped} skipped / {findings} findings / worst-tolerated-fraction {worst_frac_below:.3} in {:.1}s",
+        t0.elapsed().as_secs_f32());
+    if findings > 0 {
+        std::process::exit(2);
+    }
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.first().map(|s| s.as_str()) == Some("--float") {
+        let batches: u32 = argv.get(1).and_then(|s| s.parse().ok()).unwrap_or(1);
+        let seed0: u32 = argv.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let gpu = pollster::block_on(init_gpu());
+        run_float_campaign(batches, seed0, &root, &gpu);
+        return;
+    }
     if argv.first().map(|s| s.as_str()) == Some("--bisect") {
         let seed: u32 = argv[1].parse().expect("seed");
         let fn_idx: usize = argv[2].parse().expect("fn idx");

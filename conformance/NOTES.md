@@ -43,7 +43,29 @@ minimized "deep chain → hang" repro would be the artifact to attach if filed.
 |---|---|---|---|---|
 | integer/bool/shift/div/select/loop | ~24,000 | ~98M | 2 (Class A) | bit-exact domain |
 | + cross-function calls (leaf callees) | 1,440 | 5.9M | **0** | call lowering correct; ~178k call sites |
-| floats (ULP-classified) | not yet (P2) | — | — | the new-territory axis |
+| floats (fraction-classified) | campaign running | — | — | see Class C method below |
+
+## Class C — float arithmetic (method; `--float`)
+
+Floats can't be bit-exact-compared: fma-contraction, division rounding, and catastrophic
+cancellation make the GPU legitimately differ from the CPU. The naive metrics fail loudly —
+a per-input ULP threshold of 64 flagged **32 "findings" in 2 batches, all false positives**
+(e.g. cpu `-1.5665436e-1` vs gpu `-1.5665887e-1`, a ~3e-5 relative difference from rounding).
+
+The working classifier is **per-function and statistical**, not per-input:
+- grammar is "exact-ish" only (`+ - * /`, neg, abs, min, max, fma, select, a halving loop);
+  **transcendentals are excluded** — their precision is driver-defined, so they are all
+  false positives for *miscompile* hunting.
+- inputs are finite normal f32 in ±[~0.008, 512), derived by the same `to_f32` on both sides;
+  any input where either side reaches inf/NaN is **skipped** (unclassifiable).
+- per function, count the fraction of finite inputs whose **relative** error exceeds 1%; flag
+  the function only if that fraction exceeds **25%**. A real miscompile diverges on ~all
+  inputs; legitimate cancellation spikes on only a sparse few.
+- Calibration: across ~390K comparisons the worst *legitimate* function diverged on 16.3%
+  of inputs — under the 25% gate, with headroom below the ~100% a systematic bug would show.
+
+Limits (honest): input-range-specific miscompiles below the 25% fraction would be missed;
+inf/NaN/subnormal/transcendental behavior is out of scope for v1 and is its own future axis.
 
 **Conformance statement (2026-06-10):** across ~30M bit-exact comparisons over integer and
 cross-function-call programs, rust-gpu produced exactly **2 miscompiles, both one motif**
