@@ -183,7 +183,7 @@ and look are Rust source.
       harness); depends on gpu-shader-lib via git (or path until published).
       [RED: repo creation needs the Approvals line with the chosen name]
 
-- [ ] L1. `shaderlib::synth`: oscillators (sine/saw/pulse/FM pair), ADSR envelope,
+- [x] (2026-06-10 oscilla 5a4be41: FM/saw/sine + closed-form ADSR + one-pole + mixer, 5 test suites green; lives in oscilla-synth not shaderlib — own repo per Carter; gallery-primitive visuals deferred to the page milestone) L1. `shaderlib::synth`: oscillators (sine/saw/pulse/FM pair), ADSR envelope,
       one-pole filter, voice mixer — pure `fn(sample_index, params) -> f32` block
       renderer + a visual kernel fed by the same patch state (level/pitch reactive,
       built on gallery primitives). CPU tests: pitch via zero-crossing count,
