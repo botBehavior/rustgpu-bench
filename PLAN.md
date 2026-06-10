@@ -210,6 +210,24 @@ and look are Rust source.
       export; spectrum + oscilloscope visual modes built from the audio block (the
       "oscilla" namesake). Each lands as its own verified increment, same discipline.
 
+## Phase M — oscilla v2: the performance instrument (GREEN)
+
+Carter feedback 2026-06-10: "supposed to be live audio visual effects, not a download.
+it needs a more advanced and dynamic interface and controls." The experience IS the
+product: visuals-first, full-bleed, always alive; controls performable; export tucked away.
+
+- [x] (2026-06-10 77c34ad: gpu-shader-lib via git dep — its first cross-repo consumer; GPU-verified 1.91e-5; reactivity test in CPU suite) M1. Visual engine v2 (Rust): full-screen audio-reactive composite built on
+      gpu-shader-lib (git dep from rustgpu-bench — the library's first cross-repo
+      consumer): domain-warped FBM + IQ palette driven by bass/mid/high Goertzel bins,
+      waveform glow overlay, level-driven bloom, time-animated even at silence.
+      CPU tests (finite/range/reactivity: louder ⇒ measurably brighter).
+- [x] (2026-06-10 77c34ad: full-bleed canvas, power overlay, on-screen piano, XY pad, smoothed params, drawer) M2. Interface v2 (synth.html rework): full-viewport canvas; click-to-power
+      overlay; on-screen playable piano (pointer/touch) + computer keys + MIDI;
+      XY performance pad (cutoff × fm_depth) with smoothed (zipper-free) param lerp;
+      advanced drawer holds sliders/share/record/midi status — never the front face.
+- [~] (2026-06-10 headless: 2.50× brightness silent→playing, audio path unchanged; Pages redeployed — AWAITING CARTER RETEST, his ears decide) M3. Headless verify (reactivity beacon: silent-vs-playing pixel delta),
+      redeploy Pages, commit; Carter retest gate — his ears decide, not the beacons.
+
 ## Approvals (Carter writes lines here, e.g. `approved: E1 name=rustgpu-bench 2026-06-11`)
 
 - approved: L0 name=oscilla (Carter in chat 2026-06-10: "oscilla is a bold name, let's make it a bold project") — repo botBehavior/oscilla, create public when Phase K is complete
