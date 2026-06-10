@@ -71,12 +71,21 @@ is SPIR-V→naga→WGSL, and naga roughly **doubles** runtime at scale (Firestar
 checks or lost optimization, it's a fixable compiler gap to hand upstream. **Nobody has
 isolated which.** That is the highest-leverage open question for the mission.
 
-**What we already know:**
-- naga overhead is small on NVIDIA at small scale (+24%) but ~2× on RADV at large scale —
-  so it's driver- and size-dependent, like the tracer gap.
-- `matmul_unchecked` loses its 2.5× native win when routed through naga → at least part of
-  the tax is wgpu re-injecting bounds checks that passthrough skips.
-- We have NOT yet measured WGSL-side *unchecked* — the key control.
+**STATUS: core question answered 2026-06-10 (commit 89efe97, `naga-tax.md`).** Added the
+`rustgpu-naga-unchk` + `hand-wgsl-unchk` control arms. **The naga tax IS removable bounds
+checks** — `unchecked()` collapses naga onto passthrough fully (render 1.356→1.091=spv;
+matmul_unchecked 1.741→0.701=spv, a 2.48× swing). The rust-gpu↔hand gap *survives*
+checks-off: matmul → parity (0.702 vs 0.704), render keeps 1.85× = codegen shape
+(driver-specific). Web-path "double-check trap" documented (need `get_unchecked` in Rust
+AND `unchecked()` in wgpu). **Remaining:** saturation/throughput sweep (Firestar's core
+methodology critique — absolute numbers still single-dispatch); structural WGSL diff;
+cross-vendor confirmation on RADV; #614 follow-up (RED).
+
+**What we already know (now confirmed):**
+- The naga overhead is entirely wgpu's injected bounds checks; no transpilation penalty on
+  NVIDIA once checks are off.
+- rust-gpu bakes its own checks into the SPIR-V — wgpu's `unchecked()` can't strip those,
+  so `get_unchecked` in the Rust source is also required.
 
 **Method (the matrix):** for each workload (collatz, matmul, tracer + at least one heavy
 new one), measure these arms, at small AND saturating sizes:
