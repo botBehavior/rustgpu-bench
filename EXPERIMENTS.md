@@ -36,16 +36,16 @@ Full data: `bench-results.json`; methodology: `RESULTS.md`; gap analysis: `ANALY
   render rustgpu-spv 1.447 vs hand-WGSL 1.514 — *parity*. NVIDIA digests the Phi-heavy
   form worse than RADV. The structural mechanism stands; its *cost* is driver-dependent.
 
-**Fuzzer findings (`tools/diff-fuzz`, `findings/`):** 24,000 generated pure-integer
-functions / ~98M comparisons → **2 confirmed rust-gpu miscompiles**, both reproducing
-identically through NVIDIA passthrough AND the naga frontend (two independent SPIR-V
-consumers agree with each other and disagree with native rustc):
-- `findings/min-module-seed423.rs` (9 nodes): `if 0 < x.wrapping_mul(EVEN_CONST) { y } else { y % (C|1) }`
-- `findings/min-module-seed303.rs` (15 nodes): a bounded loop accumulating
-  `acc*1664525 + (y + select(y < (C|y), x, select(x < C2, x, y)))`
-- **Shared motif:** a `<` comparison whose operand is `wrapping_mul`-by-even or
-  `bitwise-or`-with-constant, feeding a select. Smells like a const-prop / range-analysis
-  pass folding the comparison to a constant. (Hypothesis — we have not read the passes.)
+**Fuzzer findings (`tools/diff-fuzz`, `findings/`, CORRECTED 2026-06-10):** an earlier draft
+here claimed "2 confirmed rust-gpu miscompiles." **Retracted** — see `conformance/NOTES.md`.
+On cross-backend re-verification (`tools/diff-fuzz/src/bin/repro.rs`): one finding did not
+reproduce standalone; the other is an **NVIDIA Vulkan driver** miscompile (a nested select
+guarded by `y < (C|y)` returns the wrong branch on NVIDIA Vulkan, but is correct on WARP/DX12
+and CPU, and reproduces from hand-written WGSL — so it is downstream of rust-gpu, not its
+codegen). The "two independent SPIR-V consumers" (passthrough + naga) were **not** independent
+— they share the one driver. Net: **0 confirmed rust-gpu miscompiles** across ~108M
+comparisons; 1 driver bug surfaced; 1 real rust-gpu *compile-time* hang on deep call chains.
+The methodology lesson — attribution needs multiple backends — is the durable takeaway.
 
 **#614 feedback to act on:**
 - *Latency vs throughput*: our single-dispatch latency measurements barely load the GPU;

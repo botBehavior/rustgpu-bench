@@ -1,3 +1,6 @@
+// CORRECTION 2026-06-10: not a distinct rust-gpu bug. The minimized form withdrew (didn't
+// reproduce); this original also contains the nested `< (745348641|y)` select, i.e. the SAME
+// NVIDIA-driver nested-select bug as seed303 (conformance/NOTES.md Finding 1), not rust-gpu.
 // MISMATCH seed=423 fn=43 x=1717998298 y=2775663729
 // cpu(interp)=545966273 gpu=25839809
 // verify natively: this file is valid Rust
