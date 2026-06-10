@@ -188,7 +188,7 @@ and look are Rust source.
       renderer + a visual kernel fed by the same patch state (level/pitch reactive,
       built on gallery primitives). CPU tests: pitch via zero-crossing count,
       envelope monotonicity, output bounded [-1, 1].
-- [ ] L2. GPU verify + entries: `synth_audio_cs` (one thread per sample, block-sized
+- [x] (2026-06-10 oscilla: 8 chained GPU blocks within 1.46e-5 of CPU oracle, boundaries continuous, visual 2.4e-7; two new subset edges documented: subslicing + array-unsizing don't lower) L2. GPU verify + entries: `synth_audio_cs` (one thread per sample, block-sized
       dispatch), `synth_visual_cs`; runner verification vs CPU rendering of the same
       block (bit-tolerant float gate as established).
 - [ ] L3. `web/synth.html`: QWERTY keyboard → patch state; GPU renders audio blocks
