@@ -77,6 +77,84 @@ pub fn physarum_diffuse_cs(
     }
 }
 
+// ---------------- Mycelia: multi-species physarum spectacle ----------------
+use gpu_shared::mycelia::{Agent as MyAgent, Params as MyParams, N_SPECIES};
+
+#[spirv(compute(threads(64)))]
+pub fn mycelia_spawn_cs(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &MyParams,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] agents: &mut [MyAgent],
+) {
+    let i = id.x;
+    if i < params.n_agents {
+        agents[i as usize] = gpu_shared::mycelia::spawn_agent(i, params);
+    }
+}
+
+#[spirv(compute(threads(64)))]
+pub fn mycelia_update_cs(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &MyParams,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] agents: &mut [MyAgent],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] trail: &mut [f32],
+) {
+    let i = id.x;
+    if i >= params.n_agents {
+        return;
+    }
+    let (next, cell) = gpu_shared::mycelia::update_agent(&agents[i as usize], trail, params, i);
+    agents[i as usize] = next;
+    // non-atomic deposit into the agent's own channel — races lose a few, fine at scale
+    trail[cell as usize] += params.deposit;
+}
+
+#[spirv(compute(threads(8, 8)))]
+pub fn mycelia_diffuse_cs(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &MyParams,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] trail_in: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] trail_out: &mut [f32],
+) {
+    let x = id.x;
+    let y = id.y;
+    if x >= params.width || y >= params.height {
+        return;
+    }
+    let cells = params.width * params.height;
+    let mut c = 0u32;
+    while c < N_SPECIES {
+        let idx = c * cells + y * params.width + x;
+        trail_out[idx as usize] = gpu_shared::mycelia::diffuse_at(trail_in, c, x, y, params);
+        c += 1;
+    }
+}
+
+/// Trail channels -> luminous color (in tested Rust) -> packed RGBA8 in `out`.
+#[spirv(compute(threads(8, 8)))]
+pub fn mycelia_render_cs(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &MyParams,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] trail: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] out: &mut [u32],
+) {
+    let x = id.x;
+    let y = id.y;
+    if x >= params.width || y >= params.height {
+        return;
+    }
+    let cells = params.width * params.height;
+    let i = y * params.width + x;
+    let c0 = trail[i as usize];
+    let c1 = trail[(cells + i) as usize];
+    let c2 = trail[(2 * cells + i) as usize];
+    let col = gpu_shared::mycelia::shade(c0, c1, c2, params.exposure);
+    let r = (col.x * 255.0) as u32;
+    let g = (col.y * 255.0) as u32;
+    let b = (col.z * 255.0) as u32;
+    out[i as usize] = r | (g << 8) | (b << 16) | (255u32 << 24);
+}
+
 #[spirv(compute(threads(8, 8)))]
 pub fn render_cs(
     #[spirv(global_invocation_id)] id: UVec3,

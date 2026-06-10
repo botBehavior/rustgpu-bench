@@ -58,6 +58,7 @@ pub struct Params {
     pub mouse_y: f32,
     pub mouse_force: f32, // >0 attract toward cursor, <0 repel, 0 off
     pub mouse_radius: f32,
+    pub exposure: f32, // render gain
 }
 
 impl Params {
@@ -79,6 +80,7 @@ impl Params {
             mouse_y: -1.0,
             mouse_force: 0.0,
             mouse_radius: 120.0,
+            exposure: 1.0,
         }
     }
     #[inline]
@@ -211,6 +213,26 @@ pub fn diffuse_at(trail: &[f32], c: u32, x: u32, y: u32, p: &Params) -> f32 {
     (sum / 9.0) * p.decay
 }
 
+/// Render math — kept in tested Rust on purpose. Maps the three trail-channel
+/// intensities at a pixel to a luminous linear-then-tonemapped color. Each
+/// species owns a base hue (warm / cool / acid); overlaps blend, so the
+/// territory boundaries glow with mixed colors. `exposure` scales brightness.
+pub fn shade(c0: f32, c1: f32, c2: f32, exposure: f32) -> glam::Vec3 {
+    use glam::vec3;
+    // saturating brightness per channel: dense trail -> ~1, empty -> 0
+    let b = |c: f32| 1.0 - (-(c * exposure).max(0.0)).exp();
+    let col0 = vec3(1.0, 0.42, 0.12); // ember
+    let col1 = vec3(0.14, 0.72, 1.0); // ice
+    let col2 = vec3(0.62, 1.0, 0.24); // acid
+    let lin = col0 * b(c0) + col1 * b(c1) + col2 * b(c2);
+    // Reinhard tonemap + approximate sRGB gamma, clamped to [0,1]
+    let tm = |x: f32| {
+        let m = x / (1.0 + x);
+        m.max(0.0).powf(0.4545)
+    };
+    vec3(tm(lin.x), tm(lin.y), tm(lin.z))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +310,22 @@ mod tests {
         // heading should rotate toward the cursor (target angle 0)
         let toward = (next.angle.cos()) > agent.angle.cos();
         assert!(toward, "mouse attraction should bend heading toward +x");
+    }
+
+    #[test]
+    fn shade_is_bounded_and_monotonic() {
+        for &(a, b, c) in &[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (5.0, 5.0, 5.0), (100.0, 0.0, 0.0)] {
+            let col = shade(a, b, c, 1.0);
+            for v in [col.x, col.y, col.z] {
+                assert!(v.is_finite() && (0.0..=1.0).contains(&v), "{v} out of range");
+            }
+        }
+        // more trail in a channel => brighter in that channel's dominant hue
+        let dim = shade(0.2, 0.0, 0.0, 1.0);
+        let bright = shade(4.0, 0.0, 0.0, 1.0);
+        assert!(bright.x > dim.x, "denser ember trail should be brighter");
+        // empty field renders black
+        assert_eq!(shade(0.0, 0.0, 0.0, 1.0), glam::Vec3::ZERO);
     }
 
     #[test]
