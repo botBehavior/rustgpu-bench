@@ -177,7 +177,7 @@ directive same day: **own repo, started only after Phase K is complete.** Projec
 live-coding loop (2-s rebuild, hot-swap) makes it a playable instrument whose sound
 and look are Rust source.
 
-- [ ] L0. New repo `botBehavior/<name>` (Carter picks name at the Approvals line —
+- [x] (2026-06-10 github.com/botBehavior/oscilla PUBLIC, day-zero scaffold: synth crate, sine+saw with zero-crossing pitch tests, 3 green; local C:\Users\carte\projects\oscilla) L0. New repo `botBehavior/<name>` (Carter picks name at the Approvals line —
       suggestions: `oscilla`, `rust-av-synth`, `ferrosynth`, `wavesmith`). Scaffold
       from rustgpu-bench plumbing (cargo-gpu build, verify-gate pattern, headless
       harness); depends on gpu-shader-lib via git (or path until published).
@@ -219,6 +219,8 @@ and look are Rust source.
 - E4: NOT approved — Carter "unclear", awaiting decision
 
 ## Loop log (append one line per completed item: date, item, outcome)
+
+- 2026-06-10 PHASE K COMPLETE (9864019): 2 standalone minimized miscompiles (9 + 15 nodes, shared comparison-fold motif: 0<x*EVEN_C and y<(C|y) selects), upstream draft awaiting Carter. L0 DONE: botBehavior/oscilla public, scaffold pushed, 3 tests green. L1 next.
 
 - 2026-06-10 A1+A2+A3: repo initialized, initial commit 2b8f940 (27 files), tag bench-2026-06-10, README written. Phase A complete.
 - 2026-06-10 B1–B5: spirv-stats tool; gap root-caused — matmul = bounds checks (unchecked: 2.5× faster, beats hand-WGSL 2.1×), tracer = codegen shape (40-Phi mega-fn vs 11 structured fns; libm + bloat hypotheses refuted), naga arm tax = wgpu re-injected checks, qptr = correct but perf-neutral. ANALYSIS.md written. Phase B complete.
