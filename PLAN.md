@@ -204,7 +204,7 @@ and look are Rust source.
       README with a recorded demo as a future E-gate asset.
 - [x] (2026-06-10 botbehavior.github.io/oscilla live, cross-linked from bench index; announcing remains RED) L5. Deploy static synth to oscilla's own Pages site (cross-link from
       rustgpu-bench pages); announcing = RED.
-- [ ] L6. BOLD scope (Carter: "make it a bold project") — after L1-L5 land, in order:
+- [x] (2026-06-10 oscilla 91ca0b7: WebMIDI, patch-URL sharing, 5s WAV export, Goertzel spectrum mode w/ unit test; polyphony+stealing was in since L3; Pages redeployed — PHASE L COMPLETE) L6. BOLD scope (Carter: "make it a bold project") — after L1-L5 land, in order:
       polyphony (8+ voices, voice stealing); WebMIDI input (play it with real keys);
       patch presets + shareable patch URLs (state in the fragment); record-to-WAV
       export; spectrum + oscilloscope visual modes built from the audio block (the
@@ -220,6 +220,7 @@ and look are Rust source.
 
 ## Loop log (append one line per completed item: date, item, outcome)
 
+- 2026-06-10 L6 SHIPPED (91ca0b7): MIDI + patch URLs + WAV + spectrum. PHASE L / OSCILLA COMPLETE. Every GREEN/YELLOW item in this entire plan is now done; remaining = RED gates (miscompile issue, #614 reply, E4, G4, oscilla announce, crates.io publish) + F-watches.
 - 2026-06-10 L1–L5 ALL SHIPPED in oscilla: kernels (5 suites), GPU verify (1.46e-5), playable synth.html (worklet ring + honest margin), live-coding hot-swap (370ms swap, ~2.4s warm edit-to-sound), Pages live at botbehavior.github.io/oscilla. Only L6 bold tier + RED gates remain. Three more SPIR-V subset edges documented today: checked arithmetic, subslicing, array-unsizing.
 - 2026-06-10 PHASE K COMPLETE (9864019): 2 standalone minimized miscompiles (9 + 15 nodes, shared comparison-fold motif: 0<x*EVEN_C and y<(C|y) selects), upstream draft awaiting Carter. L0 DONE: botBehavior/oscilla public, scaffold pushed, 3 tests green. L1 next.
 
