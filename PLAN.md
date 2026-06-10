@@ -225,7 +225,7 @@ product: visuals-first, full-bleed, always alive; controls performable; export t
       overlay; on-screen playable piano (pointer/touch) + computer keys + MIDI;
       XY performance pad (cutoff × fm_depth) with smoothed (zipper-free) param lerp;
       advanced drawer holds sliders/share/record/midi status — never the front face.
-- [~] (2026-06-10 headless: 2.50× brightness silent→playing, audio path unchanged; Pages redeployed — AWAITING CARTER RETEST, his ears decide) M3. Headless verify (reactivity beacon: silent-vs-playing pixel delta),
+- [~] (2026-06-10 v3 c67b2c9 after Carter's retest found distortion + weak visuals: ROOT-CAUSED ring-lap corruption (stale buffered-report → overfill → write laps read) — now exact AudioContext-clock accounting; visuals rebuilt as polar nebula + circular scope ring + feedback trails (react 3.55×, trails 1.41×/frame). Redeployed — AWAITING CARTER RETEST #2) M3. Headless verify (reactivity beacon: silent-vs-playing pixel delta),
       redeploy Pages, commit; Carter retest gate — his ears decide, not the beacons.
 
 ## Approvals (Carter writes lines here, e.g. `approved: E1 name=rustgpu-bench 2026-06-11`)
