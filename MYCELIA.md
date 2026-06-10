@@ -73,8 +73,9 @@ cell: forage (income + deplete). Branch stochastically when resource-rich. Anast
   source and a sink by TWO routes (short + long). Run grow-free transport+adaptation N steps.
   Assert the **short route's biomass ends thicker than the long route's** — the network
   *chooses* the efficient path. This both validates the solver and demonstrates the science.
-- **GPU-vs-CPU**: deterministic single-tip growth bit-comparable; the transport field
-  bit/ε-comparable for a fixed biomass+resource setup (the established statistical gate).
+- **GPU-vs-CPU** ✓ *delivered* (`bench/src/bin/myc_verify.rs`): deterministic axis-aligned grow
+  is **bit-exact**; the transport field is ε-comparable (max rel err ~1e-7, fma-only) for a
+  fixed biomass+resource setup. Run: `cargo run -p bench --bin myc_verify --release`.
 - **Headless browser**: renders, field is alive, mouse-drop foraging visibly connects.
 
 ## Build phases
@@ -107,18 +108,18 @@ cell: forage (income + deplete). Branch stochastically when resource-rich. Anast
       routes equilibrate independently by length, so the numbers cross-validate. Tuned
       α=0.2, K=8, adapt_rate=0.08, atrophy=0.03 on CPU. `mycelium_adapt_cs` compiles to
       SPIR-V + transpiles naga→WGSL. 15/15 mycelium tests green. 2026-06-10.
-- [~] **T4 — GPU + page.** DONE: all five rust-gpu entries (scatter-spawn / grow / transport /
+- [x] **T4 — GPU + page.** All five rust-gpu entries (scatter-spawn / grow / transport /
       adapt+feed / render) compile + transpile naga→WGSL; `web/mycelium.html` runs the full
       multi-pass pipeline (ping-pong resource, K=6 transport sub-dispatches, per-frame
       grow→transport→adapt→render→present, zero readback); bioluminescent render (foxfire
       cyan-green cord glow + resource shimmer on a near-black substrate); mouse drops a
       nutrient disk (folded into the adapt pass — a standalone single-`&mut[f32]` threads(8,8)
-      entry is silently culled by this rust-gpu build, a real gotcha worth recording);
-      scattered inoculation seeds a living field. Reusable headless verifier `web/headless.py`
-      (serves web/, runs `?auto` in headless WebGPU Chrome, captures beacons) — **verified OK**:
-      304 frames, field alive, no error. 2026-06-10. REMAINING: the GPU-vs-CPU determinism
-      gate (deterministic single-tip grow + fixed transport field, GPU readback vs CPU) and
-      cord-between-colonies look — carried to the next verification/polish pass.
+      entry is silently culled by this rust-gpu build, gotcha recorded); scattered inoculation
+      seeds a living field. Reusable headless verifier `web/headless.py` — **verified OK**
+      (304 frames, field alive, no error). **GPU-vs-CPU determinism gate** `bench/src/bin/
+      myc_verify.rs` (real rust-gpu SPIR-V via PASSTHROUGH vs the CPU reference) — **GATE OK**:
+      transport max rel err 1.6e-7 (resource) / 5.3e-7 (flux); grow **bit-exact** (0.0 diff on
+      tips + all three fields). 2026-06-10. (Cords-between-colonies look = T7 polish.)
 - [ ] **T5 — Competition & zone lines.** Multi-colony: rival-biomass avoidance in growth,
       `barrier` deposition + mutual suppression at interfaces → permanent spalted-wood lines.
 - [ ] **T6 — Life cycle (the payoff).** Fruiting detection (biomass+resource > threshold),
