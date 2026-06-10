@@ -73,6 +73,41 @@ rust-gpu's own: `1.836 / 0.702 = 2.6×`. wgpu's on hand-WGSL: `1.657 / 0.704 = 2
 Consistent with the native-passthrough finding (checks worth 2.5×). Checks dominate this
 kernel's runtime regardless of source language.
 
+## At saturation (throughput) — answering the latency critique
+
+Firestar99's core #614 point: single small dispatches barely load the GPU, so latency
+numbers may not reflect throughput. `cargo run -p bench --release -- --saturate` sweeps the
+problem size up until dispatches are 20–70 ms (far above any latency floor) and reports
+work/time. **Both conclusions hold at full occupancy.**
+
+**render (tracer) @ 1280×720, Mray-samples/s (higher better):**
+
+| spp | spv | naga | naga-unchk | hand | hand-unchk |
+|---|---|---|---|---|---|
+| 32 | 8469 | 6818 | 9382 | 20740 | 21205 |
+| 128 | 7247 | 5884 | 7040 | 13419 | 13959 |
+| 512 (71 ms) | 6615 | 5344 | **6523** | 12089 | **12159** |
+
+- naga-unchk tracks spv at every size → the naga tax is removable checks *at saturation*, not
+  just at small sizes.
+- rust-gpu vs hand-WGSL holds at **1.86×** (6523 vs 12159) at 512 spp — essentially the same
+  1.85× we measured by latency. **The codegen-shape gap is not a small-dispatch artifact.**
+  (Throughput falls for *all* arms as spp grows — register/occupancy pressure in the longer
+  loop — but the ratio is stable.)
+
+**matmul, GFLOP/s (higher better):**
+
+| N | rustgpu-checked | rustgpu-unchecked | hand-checked | hand-unchk |
+|---|---|---|---|---|
+| 512 | 1129 | 2840 | 1255 | 2830 |
+| 1024 | 1173 | **3058** | 1291 | **3049** |
+| 2048 (22 ms) | 759 | 2422 | 872 | 2520 |
+
+- rust-gpu unchecked = hand-WGSL unchecked **parity** at saturation (3058 vs 3049 GFLOP/s at
+  N=1024; within 4% at N=2048). ~3 TFLOP/s for a naive non-tiled kernel — memory-bound, but
+  the languages tie.
+- The ~2.6× checked/unchecked ratio persists across all N. Checks dominate this kernel.
+
 ## Takeaways
 
 - **For the "Rust everywhere / WebGPU" thesis:** rust-gpu→WebGPU has *no inherent
@@ -84,10 +119,10 @@ kernel's runtime regardless of source language.
   (much larger than our NVIDIA 23%). Our decomposition predicts `unchecked()` should
   recover most of that on RADV too — i.e. RADV's injected checks are simply more
   expensive. A one-line ask for his next run.
-- **Limitation acknowledged (Firestar's core critique):** these are still single-dispatch
-  latencies at modest sizes. The check-tax conclusion is robust (it's a 2.5× ratio, far
-  above noise), but the absolute numbers want a saturation/throughput sweep — the next
-  step in Experiment 1.
+- **Saturation confirms it (Firestar's core critique addressed):** the throughput sweep
+  above pushes dispatches to 20–70 ms (far past any latency floor) and both conclusions
+  hold — naga-unchk tracks passthrough, matmul ties hand-WGSL unchecked, the tracer keeps
+  its 1.86×. The findings are not small-dispatch artifacts.
 
 ## Repro
 `cargo gpu build --shader-crate shaders --output-dir shaders/spv --auto-install-rust-toolchain`

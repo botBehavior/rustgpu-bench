@@ -92,6 +92,14 @@ fn main() {
     ];
 
     let wgsl_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../shaders-wgsl");
+
+    // --saturate: sweep problem size upward and report THROUGHPUT, not latency
+    // (Firestar99's #614 critique — single small dispatches barely load the GPU).
+    if std::env::args().any(|a| a == "--saturate") {
+        saturate(&ctx, &arms, &wgsl_dir);
+        return;
+    }
+
     let mut results = Vec::new();
 
     for workload in ["collatz", "matmul", "matmul_unchecked", "render", "render_v2"] {
@@ -166,6 +174,87 @@ fn main() {
     println!("wrote {}", out.display());
 }
 
+/// Throughput sweep: grow the problem until the GPU saturates, report work/time
+/// per arm at each size. The point is to show the arm RATIOS hold (or shift) at
+/// full occupancy — answering "your latencies barely load the GPU".
+fn saturate(ctx: &Ctx, arms: &[(&str, wgpu::ShaderModule, f64)], wgsl_dir: &std::path::Path) {
+    // build hand-WGSL modules (checked + unchecked) once; reused across sizes
+    let mut hand: std::collections::HashMap<&str, (wgpu::ShaderModule, wgpu::ShaderModule)> =
+        std::collections::HashMap::new();
+    for w in ["render", "matmul"] {
+        if let Ok(src) = std::fs::read_to_string(wgsl_dir.join(format!("{w}.wgsl"))) {
+            let checked = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("hand-wgsl"),
+                source: wgpu::ShaderSource::Wgsl(src.clone().into()),
+            });
+            let unchk = unsafe {
+                ctx.device.create_shader_module_trusted(
+                    wgpu::ShaderModuleDescriptor {
+                        label: Some("hand-wgsl-unchk"),
+                        source: wgpu::ShaderSource::Wgsl(src.into()),
+                    },
+                    wgpu::ShaderRuntimeChecks::unchecked(),
+                )
+            };
+            hand.insert(w, (checked, unchk));
+        }
+    }
+    let m = |n: &str| -> &wgpu::ShaderModule { &arms.iter().find(|a| a.0 == n).unwrap().1 };
+    let spv = m("rustgpu-spv");
+    let naga = m("rustgpu-naga");
+    let nunchk = m("rustgpu-naga-unchk");
+
+    // --- render (the tracer): samples sweep at 1280x720; work = ray-samples ---
+    println!("\n=== render saturation @ 1280x720 — throughput (Mraysamples/s, higher better) ===");
+    let (h_chk, h_unchk) = &hand["render"];
+    let render_arms: [(&str, &wgpu::ShaderModule); 5] = [
+        ("rustgpu-spv", spv),
+        ("rustgpu-naga", naga),
+        ("rustgpu-naga-unchk", nunchk),
+        ("hand-wgsl", h_chk),
+        ("hand-wgsl-unchk", h_unchk),
+    ];
+    for samples in [32u32, 128, 512] {
+        let r = RenderParams { width: 1280, height: 720, samples, seed: 7 };
+        let rays = (r.width as f64) * (r.height as f64) * (r.samples as f64);
+        for (name, module) in render_arms {
+            let spec = render_spec(ctx, "render_cs", r);
+            match time_pipeline(ctx, &spec, module) {
+                Ok(s) => println!(
+                    "  spp {samples:4}  {name:18} {:8.3} ms  {:9.1} Mray/s",
+                    s.median,
+                    rays / (s.median / 1e3) / 1e6
+                ),
+                Err(e) => println!("  spp {samples:4}  {name:18} FAILED: {e}"),
+            }
+        }
+    }
+
+    // --- matmul: N sweep; work = 2 N^3 FLOPs; isolates the bounds-check tax ---
+    println!("\n=== matmul saturation — throughput (GFLOP/s, higher better) ===");
+    let (mh_chk, mh_unchk) = &hand["matmul"];
+    let matmul_arms: [(&str, &wgpu::ShaderModule, &str); 4] = [
+        ("rustgpu-checked", spv, "matmul_cs"),
+        ("rustgpu-unchecked", spv, "matmul_unchecked_cs"),
+        ("hand-wgsl", mh_chk, "matmul_cs"),
+        ("hand-wgsl-unchk", mh_unchk, "matmul_cs"),
+    ];
+    for n in [512u32, 1024, 2048] {
+        let flops = 2.0 * (n as f64).powi(3);
+        for (name, module, entry) in matmul_arms {
+            let spec = matmul_spec(ctx, entry, n);
+            match time_pipeline(ctx, &spec, module) {
+                Ok(s) => println!(
+                    "  N {n:5}  {name:18} {:8.3} ms  {:8.1} GFLOP/s",
+                    s.median,
+                    flops / (s.median / 1e3) / 1e9
+                ),
+                Err(e) => println!("  N {n:5}  {name:18} FAILED: {e}"),
+            }
+        }
+    }
+}
+
 async fn init() -> Ctx {
     let instance = wgpu::Instance::default();
     let adapter = instance
@@ -205,6 +294,14 @@ struct Stats {
     note: String,
 }
 
+/// Carries the size knobs verify needs, so a swept spec self-describes.
+#[derive(Clone, Copy)]
+enum VerifyKind {
+    Collatz(u32),
+    Matmul(u32),
+    Render(RenderParams),
+}
+
 struct Bufs {
     bufs: Vec<wgpu::Buffer>,
     /// per-binding shader writability — must match the shader exactly for
@@ -215,18 +312,26 @@ struct Bufs {
     read_binding: usize,
     workgroups: (u32, u32, u32),
     entry: &'static str,
+    verify: VerifyKind,
+}
+
+fn base_spec(ctx: &Ctx, workload: &str) -> Bufs {
+    match workload {
+        "collatz" => collatz_spec(ctx, COLLATZ_LEN),
+        "matmul" => matmul_spec(ctx, "matmul_cs", MATMUL_N),
+        "matmul_unchecked" => matmul_spec(ctx, "matmul_unchecked_cs", MATMUL_N),
+        "render" => render_spec(ctx, "render_cs", RENDER),
+        "render_v2" => render_spec(ctx, "render_v2_cs", RENDER),
+        _ => unreachable!(),
+    }
 }
 
 fn run_workload(ctx: &Ctx, workload: &str, module: &wgpu::ShaderModule) -> Result<Stats, String> {
-    let spec = match workload {
-        "collatz" => collatz_spec(ctx),
-        "matmul" => matmul_spec(ctx, "matmul_cs"),
-        "matmul_unchecked" => matmul_spec(ctx, "matmul_unchecked_cs"),
-        "render" => render_spec(ctx, "render_cs"),
-        "render_v2" => render_spec(ctx, "render_v2_cs"),
-        _ => unreachable!(),
-    };
+    let spec = base_spec(ctx, workload);
+    time_pipeline(ctx, &spec, module)
+}
 
+fn time_pipeline(ctx: &Ctx, spec: &Bufs, module: &wgpu::ShaderModule) -> Result<Stats, String> {
     let layout_entries: Vec<wgpu::BindGroupLayoutEntry> = spec
         .bufs
         .iter()
@@ -367,7 +472,7 @@ fn run_workload(ctx: &Ctx, workload: &str, module: &wgpu::ShaderModule) -> Resul
 
     // correctness gate (after timing so the readback isn't in the loop;
     // buffers still hold the last run's output)
-    let note = format!("xcheck {xcheck:.3} ms; {}", verify(ctx, workload, &spec)?);
+    let note = format!("xcheck {xcheck:.3} ms; {}", verify(ctx, spec)?);
 
     times.sort_by(|a, b| a.partial_cmp(b).unwrap());
     Ok(Stats {
@@ -411,16 +516,17 @@ fn storage_buffer(ctx: &Ctx, data: &[u8]) -> wgpu::Buffer {
     buf
 }
 
-fn collatz_spec(ctx: &Ctx) -> Bufs {
-    let input: Vec<u32> = (1..=COLLATZ_LEN).collect();
+fn collatz_spec(ctx: &Ctx, len: u32) -> Bufs {
+    let input: Vec<u32> = (1..=len).collect();
     let raw: Vec<u8> = bytemuck::cast_slice(&input).to_vec();
     Bufs {
         bufs: vec![storage_buffer(ctx, &raw)],
         writable: vec![true],
         reupload: vec![(0, raw)],
         read_binding: 0,
-        workgroups: (COLLATZ_LEN.div_ceil(64), 1, 1),
+        workgroups: (len.div_ceil(64), 1, 1),
         entry: "collatz_cs",
+        verify: VerifyKind::Collatz(len),
     }
 }
 
@@ -434,8 +540,7 @@ fn lcg_floats(n: usize, mut state: u32) -> Vec<f32> {
         .collect()
 }
 
-fn matmul_spec(ctx: &Ctx, entry: &'static str) -> Bufs {
-    let n = MATMUL_N;
+fn matmul_spec(ctx: &Ctx, entry: &'static str, n: u32) -> Bufs {
     let a = lcg_floats((n * n) as usize, 1);
     let b = lcg_floats((n * n) as usize, 2);
     Bufs {
@@ -450,12 +555,13 @@ fn matmul_spec(ctx: &Ctx, entry: &'static str) -> Bufs {
         read_binding: 3,
         workgroups: (n.div_ceil(16), n.div_ceil(16), 1),
         entry,
+        verify: VerifyKind::Matmul(n),
     }
 }
 
-fn render_spec(ctx: &Ctx, entry: &'static str) -> Bufs {
-    let params = [RENDER.width, RENDER.height, RENDER.samples, RENDER.seed];
-    let out_size = (RENDER.width * RENDER.height * 3 * 4) as usize;
+fn render_spec(ctx: &Ctx, entry: &'static str, r: RenderParams) -> Bufs {
+    let params = [r.width, r.height, r.samples, r.seed];
+    let out_size = (r.width * r.height * 3 * 4) as usize;
     Bufs {
         bufs: vec![
             storage_buffer(ctx, bytemuck::cast_slice(&params)),
@@ -464,40 +570,37 @@ fn render_spec(ctx: &Ctx, entry: &'static str) -> Bufs {
         writable: vec![false, true],
         reupload: vec![],
         read_binding: 1,
-        workgroups: (RENDER.width.div_ceil(8), RENDER.height.div_ceil(8), 1),
+        workgroups: (r.width.div_ceil(8), r.height.div_ceil(8), 1),
         entry,
+        verify: VerifyKind::Render(r),
     }
 }
 
-fn verify(ctx: &Ctx, workload: &str, spec: &Bufs) -> Result<String, String> {
+fn verify(ctx: &Ctx, spec: &Bufs) -> Result<String, String> {
     let raw = read_buffer(
         ctx,
         &spec.bufs[spec.read_binding],
         spec.bufs[spec.read_binding].size(),
     );
-    match workload {
-        "matmul_unchecked" => verify_matmul(&raw),
-        "render_v2" => verify_render(&raw),
-        "collatz" => {
+    match spec.verify {
+        VerifyKind::Collatz(len) => {
             let out: &[u32] = bytemuck::cast_slice(&raw);
-            let bad = (1..=COLLATZ_LEN)
+            let bad = (1..=len)
                 .filter(|&n| out[(n - 1) as usize] != gpu_shared::collatz_steps(n))
                 .count();
             if bad == 0 {
-                Ok(format!("verified {COLLATZ_LEN} exact"))
+                Ok(format!("verified {len} exact"))
             } else {
                 Err(format!("{bad} mismatches"))
             }
         }
-        "matmul" => verify_matmul(&raw),
-        "render" => verify_render(&raw),
-        _ => unreachable!(),
+        VerifyKind::Matmul(n) => verify_matmul(&raw, n),
+        VerifyKind::Render(r) => verify_render(&raw, r),
     }
 }
 
-fn verify_matmul(raw: &[u8]) -> Result<String, String> {
+fn verify_matmul(raw: &[u8], n: u32) -> Result<String, String> {
     let out: &[f32] = bytemuck::cast_slice(raw);
-    let n = MATMUL_N;
     let a = lcg_floats((n * n) as usize, 1);
     let b = lcg_floats((n * n) as usize, 2);
     let mut state = 12345u32;
@@ -518,20 +621,22 @@ fn verify_matmul(raw: &[u8]) -> Result<String, String> {
     }
 }
 
-fn verify_render(raw: &[u8]) -> Result<String, String> {
+fn verify_render(raw: &[u8], r: RenderParams) -> Result<String, String> {
     let out: &[f32] = bytemuck::cast_slice(raw);
     let mut sum = 0.0f64;
     let mut count = 0usize;
-    // sample every 7th pixel to keep CPU verify fast
+    // CPU oracle re-traces sampled pixels at full spp — bound to ~4000 pixels so
+    // the gate stays cheap even when samples climbs in the saturation sweep
+    let step = (r.width * r.height / 4000).max(7);
     let mut i = 0u32;
-    while i < RENDER.width * RENDER.height {
-        let c = gpu_shared::render_pixel(i % RENDER.width, i / RENDER.width, &RENDER);
+    while i < r.width * r.height {
+        let c = gpu_shared::render_pixel(i % r.width, i / r.width, &r);
         let base = (i * 3) as usize;
         sum += ((out[base] - c.x).abs()
             + (out[base + 1] - c.y).abs()
             + (out[base + 2] - c.z).abs()) as f64;
         count += 3;
-        i += 7;
+        i += step;
     }
     let mean = sum / count as f64;
     if mean < 1.0e-3 {

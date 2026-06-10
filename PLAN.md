@@ -253,6 +253,37 @@ FRAGMENT shader rendering directly to the WebGPU canvas (no readback, native-res
       readback paths, headless verify (audio beacons + visual reactivity), redeploy,
       Carter retest #3.
 
+## Phase O — finish the naga-tax answer (Experiment 1; GREEN, posting = RED)
+
+Carter committed 2026-06-10 ("handle both"): take Experiment 1 to the finish line first
+(banks credibility for Phase P), then build the conformance suite. Spec: `EXPERIMENTS.md`,
+findings so far: `naga-tax.md`.
+
+- [x] (2026-06-10 89efe97: unchecked arms ⇒ naga tax = removable bounds checks; matmul parity, render 1.85× = codegen shape; naga-tax.md) O1. Unchecked control arms + decomposition.
+- [x] (2026-06-10: --saturate sweep; at 71ms render/22ms matmul both conclusions HOLD — naga-unchk tracks spv, matmul ties hand-WGSL unchecked at 3 TFLOP/s, tracer keeps 1.86×; naga-tax.md updated) O2. Saturation/throughput sweep (Firestar's core critique): sweep render samples +
+      matmul N upward, report throughput (Mraysamples/s, GFLOP/s) at saturation per arm,
+      confirm the check-tax ratios hold at full GPU load. Update naga-tax.md.
+- [ ] O3. Structural WGSL diff: naga-emitted WGSL of rust-gpu tracer vs hand tracer —
+      where the 1.85× codegen-shape gap lives (function count, CFG, temps). Append to ANALYSIS.md.
+- [ ] O4. Refresh `drafts/614-reply-1.md`: fold in the unchecked decomposition + the
+      two-lever recipe (answers nazar-pc) + throughput numbers + render_v2 parity. [YELLOW draft]
+- [ ] O5. [RED] Post the #614 follow-up (Carter pastes or grants permission).
+
+## Phase P — the conformance suite (Experiment 2; GREEN, filing issues = RED per item)
+
+The durable contribution: make rust-gpu *trustworthy*. Widen the differential fuzzer into
+a categorized bug corpus + CI-shaped harness, offered against rust-gpu #315. Spec in
+`EXPERIMENTS.md` (Experiment 2). Start: `tools/diff-fuzz/src/main.rs`.
+
+- [ ] P1. Widen the integer grammar: function calls (cross-fn inlining = riskiest
+      legalizer path), nested structs, `match`, early returns. Run a campaign; auto-bisect findings.
+- [ ] P2. Float domain: f32 ops with ULP-tolerant comparison + a divergence classifier
+      (separate miscompile from legitimate fma/transcendental ulp). The new-territory axis.
+- [ ] P3. Scale + triage: large multi-seed campaign; cluster findings by motif; build
+      `conformance/` corpus (minimized repro + failing input + native-rustc expected value).
+- [ ] P4. CI-shaped runner (deterministic seed list, fast subset) + defect-density writeup.
+- [ ] P5. [RED per item] Upstream: file confirmed bug classes; offer the harness to #315.
+
 ## Approvals (Carter writes lines here, e.g. `approved: E1 name=rustgpu-bench 2026-06-11`)
 
 - approved: L0 name=oscilla (Carter in chat 2026-06-10: "oscilla is a bold name, let's make it a bold project") — repo botBehavior/oscilla, create public when Phase K is complete
