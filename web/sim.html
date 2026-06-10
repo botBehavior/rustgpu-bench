@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Physarum — Rust kernels on WebGPU</title>
+<style>
+  body { font-family: ui-monospace, monospace; background: #0d0e12; color: #e8e8e8;
+         display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px; }
+  canvas { border: 1px solid #333; width: min(96vw, 1280px); image-rendering: auto; }
+  .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; justify-content: center; }
+  button, select { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid #555;
+           background: #23252c; color: #e8e8e8; cursor: pointer; }
+  label { display: flex; gap: 6px; align-items: center; font-size: 12px; color: #aaa; }
+  input[type=range] { width: 90px; }
+  #status { min-height: 1.3em; font-size: 13px; }
+  .accent { color: #f74c00; }
+  small { color: #777; max-width: 760px; text-align: center; }
+  a { color: #f74c00; }
+</style>
+</head>
+<body>
+<h3>Physarum slime mold — Rust kernels, your GPU<span class="accent">.</span></h3>
+<small>
+  Every kernel (sense → steer → move → deposit, diffuse + decay) is ordinary Rust from
+  <a href="https://github.com/botBehavior/rustgpu-bench">rustgpu-bench</a>, compiled to SPIR-V
+  by rust-gpu, transpiled to WGSL by naga, dispatched via WebGPU. The CPU mode runs the
+  identical Rust compiled to WASM. <a href="index.html">← the benchmark demo</a>
+</small>
+<div class="row">
+  <button id="mode-gpu">GPU mode</button>
+  <button id="mode-cpu">CPU (wasm) mode</button>
+  <button id="pause">pause</button>
+  <button id="reset">reset</button>
+  <label>agents <select id="agents">
+    <option value="65536">64k</option>
+    <option value="262144" selected>256k</option>
+    <option value="1048576">1M</option>
+  </select></label>
+</div>
+<div class="row">
+  <label>speed <input type="range" id="move_speed" min="0.2" max="3" step="0.1" value="1"></label>
+  <label>turn <input type="range" id="turn_speed" min="0.05" max="1.2" step="0.05" value="0.35"></label>
+  <label>sense∠ <input type="range" id="sensor_angle" min="0.1" max="1.4" step="0.05" value="0.5"></label>
+  <label>sense→ <input type="range" id="sensor_dist" min="2" max="24" step="1" value="9"></label>
+  <label>deposit <input type="range" id="deposit" min="0.2" max="3" step="0.1" value="1"></label>
+  <label>decay <input type="range" id="decay" min="0.85" max="0.995" step="0.005" value="0.97"></label>
+</div>
+<div id="status">initializing…</div>
+<canvas id="canvas" width="640" height="360"></canvas>
+
+<script type="module">
+const W = 640, H = 360, CELLS = W * H;
+const canvas = document.getElementById("canvas");
+const ctx2d = canvas.getContext("2d");
+const status = document.getElementById("status");
+const $ = (id) => document.getElementById(id);
+const sliders = ["move_speed", "turn_speed", "sensor_angle", "sensor_dist", "deposit", "decay"];
+const sliderVals = () => sliders.map(s => +$(s).value);
+
+let mode = null;          // "gpu" | "cpu"
+let paused = false;
+let frame = 0;
+let nAgents = +$("agents").value;
+const CPU_MAX = 16384;    // single wasm thread — keep it honest, not frozen
+
+// ---------- shared presentation: trail f32 -> fire-ish colormap ----------
+const img = ctx2d.createImageData(W, H);
+function present(trailF32) {
+  const d = img.data;
+  for (let i = 0; i < CELLS; i++) {
+    const t = Math.min(trailF32[i] * 0.25, 1.0);
+    d[i * 4] = Math.min(255, 510 * t);
+    d[i * 4 + 1] = Math.max(0, 340 * t - 60);
+    d[i * 4 + 2] = Math.max(0, 510 * t - 320);
+    d[i * 4 + 3] = 255;
+  }
+  ctx2d.putImageData(img, 0, 0);
+}
+
+// ---------- GPU mode ----------
+let gpu = null;
+async function initGpu() {
+  if (gpu) return gpu;
+  if (!navigator.gpu) throw new Error("WebGPU not available");
+  const code = await (await fetch("./kernels.wgsl")).text();
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error("no WebGPU adapter");
+  const device = await adapter.requestDevice();
+  const module = device.createShaderModule({ code });
+  const mk = (entryPoint) =>
+    device.createComputePipeline({ layout: "auto", compute: { module, entryPoint } });
+  gpu = { device, spawn: mk("physarum_spawn_cs"), update: mk("physarum_update_cs"),
+          diffuse: mk("physarum_diffuse_cs") };
+  return gpu;
+}
+
+let g = null; // gpu sim state
+async function gpuReset() {
+  const { device, spawn, update, diffuse } = await initGpu();
+  const params = device.createBuffer({ size: 40, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  const agents = device.createBuffer({ size: nAgents * 16, usage: GPUBufferUsage.STORAGE });
+  const mkTrail = () => device.createBuffer({ size: CELLS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+  const tA = mkTrail(), tB = mkTrail();
+  const staging = device.createBuffer({ size: CELLS * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const bg = (pipe, bufs) => device.createBindGroup({
+    layout: pipe.getBindGroupLayout(0),
+    entries: bufs.map((b, i) => ({ binding: i, resource: { buffer: b } })),
+  });
+  g = {
+    params, agents, tA, tB, staging, even: true,
+    spawnBG: bg(spawn, [params, agents]),
+    updA: bg(update, [params, agents, tA]), updB: bg(update, [params, agents, tB]),
+    difAB: bg(diffuse, [params, tA, tB]), difBA: bg(diffuse, [params, tB, tA]),
+  };
+  writeParams();
+  const enc = device.createCommandEncoder();
+  const p = enc.beginComputePass();
+  p.setPipeline(gpu.spawn); p.setBindGroup(0, g.spawnBG);
+  p.dispatchWorkgroups(Math.ceil(nAgents / 64)); p.end();
+  device.queue.submit([enc.finish()]);
+}
+
+function writeParams() {
+  const buf = new ArrayBuffer(40);
+  new Uint32Array(buf, 0, 4).set([W, H, nAgents, frame]);
+  new Float32Array(buf, 16, 6).set(sliderVals());
+  gpu.device.queue.writeBuffer(g.params, 0, buf);
+}
+
+async function gpuFrame() {
+  const { device } = gpu;
+  writeParams();
+  const enc = device.createCommandEncoder();
+  const p = enc.beginComputePass();
+  p.setPipeline(gpu.update); p.setBindGroup(0, g.even ? g.updA : g.updB);
+  p.dispatchWorkgroups(Math.ceil(nAgents / 64));
+  p.setPipeline(gpu.diffuse); p.setBindGroup(0, g.even ? g.difAB : g.difBA);
+  p.dispatchWorkgroups(Math.ceil(W / 8), Math.ceil(H / 8));
+  p.end();
+  enc.copyBufferToBuffer(g.even ? g.tB : g.tA, 0, g.staging, 0, CELLS * 4);
+  device.queue.submit([enc.finish()]);
+  g.even = !g.even;
+  await g.staging.mapAsync(GPUMapMode.READ);
+  present(new Float32Array(g.staging.getMappedRange()));
+  g.staging.unmap();
+}
+
+// ---------- CPU (wasm) mode ----------
+let wasm = null, c = null;
+async function cpuReset() {
+  if (!wasm) {
+    const { instance } = await WebAssembly.instantiateStreaming(fetch("./runner_web.wasm"), {});
+    wasm = instance.exports;
+  }
+  const n = Math.min(nAgents, CPU_MAX);
+  c = { n, agents: wasm.alloc(n * 16), trail: wasm.alloc(CELLS * 4), tmp: wasm.alloc(CELLS * 4) };
+  new Float32Array(wasm.memory.buffer, c.trail, CELLS).fill(0);
+  wasm.sim_spawn(c.agents, W, H, n);
+}
+
+function cpuFrame() {
+  const [ms, ts, sa, sd, dep, dec] = sliderVals();
+  wasm.sim_step(c.agents, c.trail, c.tmp, W, H, c.n, frame, ms, ts, sa, sd, dep, dec);
+  present(new Float32Array(wasm.memory.buffer, c.trail, CELLS));
+}
+
+// ---------- main loop ----------
+let last = performance.now(), fpsAvg = 0;
+async function tick() {
+  if (!paused && mode) {
+    try {
+      if (mode === "gpu") await gpuFrame(); else cpuFrame();
+      frame++;
+      const now = performance.now();
+      fpsAvg = fpsAvg * 0.9 + (1000 / (now - last)) * 0.1;
+      last = now;
+      const n = mode === "gpu" ? nAgents : c.n;
+      status.textContent = `${mode.toUpperCase()} · ${n.toLocaleString()} agents · ` +
+        `${fpsAvg.toFixed(0)} fps · ${(n * fpsAvg / 1e6).toFixed(1)}M agent-updates/s`;
+    } catch (e) {
+      status.textContent = "error: " + e.message; console.error(e); paused = true;
+      if (new URLSearchParams(location.search).has("auto"))
+        fetch("/AUTO/" + encodeURIComponent("TICK-ERROR " + mode + ": " + e.message)).catch(() => {});
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+async function setMode(m) {
+  mode = null; // halt tick() until init completes — avoids null derefs mid-switch
+  frame = 0;
+  status.textContent = m === "gpu" ? "spawning on GPU…" : "spawning on CPU (wasm)…";
+  if (m === "gpu") await gpuReset(); else await cpuReset();
+  mode = m;
+}
+$("mode-gpu").onclick = () => setMode("gpu").catch(e => status.textContent = "error: " + e.message);
+$("mode-cpu").onclick = () => setMode("cpu").catch(e => status.textContent = "error: " + e.message);
+$("pause").onclick = () => { paused = !paused; $("pause").textContent = paused ? "resume" : "pause"; };
+$("reset").onclick = () => setMode(mode ?? "gpu");
+$("agents").onchange = () => { nAgents = +$("agents").value; if (mode) setMode(mode); };
+
+const isAuto = new URLSearchParams(location.search).has("auto");
+if (!isAuto) {
+  setMode(navigator.gpu ? "gpu" : "cpu").catch(e => status.textContent = "error: " + e.message);
+}
+tick();
+
+// ---------- headless verification (?auto) ----------
+if (new URLSearchParams(location.search).has("auto")) {
+  const beacon = (msg) => fetch("/AUTO/" + encodeURIComponent(msg)).catch(() => {});
+  const timeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms));
+  const litPixels = () => {
+    const d = ctx2d.getImageData(0, 0, W, H).data;
+    let lit = 0; for (let i = 0; i < CELLS; i++) if (d[i * 4] > 8) lit++;
+    return lit;
+  };
+  (async () => {
+    await new Promise(r => setTimeout(r, 300));
+    try {
+      await Promise.race([setMode("cpu"), timeout(20000)]);
+      const f1 = frame;
+      while (frame < f1 + 5) await new Promise(r => setTimeout(r, 30));
+      await beacon(`SIM-CPU ok over 5 frames, ${c.n} agents, lit px ${litPixels()}`);
+    } catch (e) { await beacon("SIM-CPU-ERROR " + e.message); }
+    try {
+      await Promise.race([setMode("gpu"), timeout(15000)]);
+      const t0 = performance.now();
+      const F = 60;
+      const f0 = frame;
+      while (frame < f0 + F) await new Promise(r => setTimeout(r, 16));
+      const ms = (performance.now() - t0) / F;
+      await beacon(`SIM-GPU ${ms.toFixed(1)} ms/frame over ${F} frames, ${nAgents} agents, lit px ${litPixels()}`);
+    } catch (e) { await beacon("SIM-GPU-ERROR " + e.message); }
+    await beacon("SIM-DONE");
+  })();
+}
+</script>
+</body>
+</html>
