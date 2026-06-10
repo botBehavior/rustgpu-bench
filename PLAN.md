@@ -149,6 +149,61 @@ Original project #5, v1 = precompiled gallery (no server-side compile).
       demo/benchmark/sim/library/gallery — think: things only this stack can do) into
       drafts/novel-projects.md for Carter to pick from. Proposal only.
 
+## Phase K — differential compiler fuzzer for rust-gpu (GREEN; filing findings = RED per item)
+
+Carter-approved 2026-06-10 ("Number two as a base"). Auto-find miscompiles/subset edges
+by generating pure Rust fns, compiling CPU + SPIR-V, diffing outputs over input sweeps.
+
+- [ ] K1. `tools/diff-fuzz`: AST generator for small pure `fn(u32, u32) -> u32`
+      functions (integer/bool ops, comparisons, if/select, bounded while, casts —
+      bit-exact domain first; f32 with divergence classification is phase 2).
+      Emits batches of 64 fns as a generated shader-crate module + a CPU interpreter
+      of the same AST (ground-truth disagreements re-checked by compiling the
+      generated source natively with rustc — rustc-CPU is final arbiter).
+- [ ] K2. Harness: cargo-gpu build per batch (~2-3 s), one dispatch per fn over an
+      input sweep (LCG, 64k pairs), compare vs interpreter; on mismatch: shrink the
+      AST (drop nodes while mismatch persists), emit minimized repro .rs + report to
+      `fuzz-findings/`. Run a first campaign (≥500 batches / 32k fns); log stats.
+- [ ] K3. Findings triage: each real miscompile/ICE → drafts/ as an upstream issue
+      draft (RED to file); subset-edge catalog → ANALYSIS.md appendix + cheatsheet.
+      Null result is also a result: "32k generated fns, no integer miscompiles" is a
+      conformance statement worth posting (RED).
+
+## Phase L — the live-codable audio-visual synth (BLOCKED until Phase K complete)
+
+Carter-approved 2026-06-10 ("I love 6 & 4 together as an audio visual synth"); Carter
+directive same day: **own repo, started only after Phase K is complete.** Projects
+#6 + #4 fused: GPU kernels synthesize audio AND visuals from one patch state; the
+live-coding loop (2-s rebuild, hot-swap) makes it a playable instrument whose sound
+and look are Rust source.
+
+- [ ] L0. New repo `botBehavior/<name>` (Carter picks name at the Approvals line —
+      suggestions: `oscilla`, `rust-av-synth`, `ferrosynth`, `wavesmith`). Scaffold
+      from rustgpu-bench plumbing (cargo-gpu build, verify-gate pattern, headless
+      harness); depends on gpu-shader-lib via git (or path until published).
+      [RED: repo creation needs the Approvals line with the chosen name]
+
+- [ ] L1. `shaderlib::synth`: oscillators (sine/saw/pulse/FM pair), ADSR envelope,
+      one-pole filter, voice mixer — pure `fn(sample_index, params) -> f32` block
+      renderer + a visual kernel fed by the same patch state (level/pitch reactive,
+      built on gallery primitives). CPU tests: pitch via zero-crossing count,
+      envelope monotonicity, output bounded [-1, 1].
+- [ ] L2. GPU verify + entries: `synth_audio_cs` (one thread per sample, block-sized
+      dispatch), `synth_visual_cs`; runner verification vs CPU rendering of the same
+      block (bit-tolerant float gate as established).
+- [ ] L3. `web/synth.html`: QWERTY keyboard → patch state; GPU renders audio blocks
+      ahead of the play cursor → readback → AudioWorklet ring buffer; visual kernel
+      renders to canvas in the same frame loop; status shows block budget vs deadline
+      (the honest metric: GPU audio is about meeting realtime, report it truthfully).
+      Headless verify: block waveform statistical-gate vs CPU + visual pixel sanity
+      (audio output itself can't be heard headless — note that honestly).
+- [ ] L4. Live-coding mode (the #4 half): `tools/live.ps1` — watch `shaderlib/src/`,
+      on change: cargo-gpu build → naga → kernels.wgsl; page polls the file's
+      modified-stamp and hot-swaps pipelines WITHOUT stopping the audio ring.
+      Measure and report edit→sound latency. Local-dev experience; documented in
+      README with a recorded demo as a future E-gate asset.
+- [ ] L5. Deploy static synth to docs/ (cross-links); announcing = RED.
+
 ## Approvals (Carter writes lines here, e.g. `approved: E1 name=rustgpu-bench 2026-06-11`)
 
 - approved: E1 name=rustgpu-bench (Carter in chat, 2026-06-10)
