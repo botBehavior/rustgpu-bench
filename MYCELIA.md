@@ -120,8 +120,17 @@ cell: forage (income + deplete). Branch stochastically when resource-rich. Anast
       myc_verify.rs` (real rust-gpu SPIR-V via PASSTHROUGH vs the CPU reference) — **GATE OK**:
       transport max rel err 1.6e-7 (resource) / 5.3e-7 (flux); grow **bit-exact** (0.0 diff on
       tips + all three fields). 2026-06-10. (Cords-between-colonies look = T7 polish.)
-- [ ] **T5 — Competition & zone lines.** Multi-colony: rival-biomass avoidance in growth,
-      `barrier` deposition + mutual suppression at interfaces → permanent spalted-wood lines.
+- [~] **T5 — Competition & zone lines.** KERNEL + PROOF DONE: two colonies encoded as the
+      **sign of biomass** (+ = colony 0, − = colony 1) — a design that adds no new buffers and
+      leaves single-colony behaviour byte-identical. `conductivity` is sign-gated (rival cells
+      never exchange resource → colonies stay metabolically separate); `grow_tip` gains
+      rival-biomass avoidance (steers on a combined nutrient−rival signal) and a **clash → stop**
+      rule that leaves the spalted-wood zone line at the interface. 4 CPU tests incl. the
+      **zone-line proof** — two colonies grow head-on, meet, and form a boundary neither crosses
+      (no interleaving) — 20/20 mycelium tests green. 2026-06-10. PENDING (T5b/c): multi-colony
+      scatter-spawn (assign colony per tip) + colony-hued render with dark zone lines + page
+      wiring — do the shader rebuild + `paramsBytes` update (Params grew by rival_avoid/
+      clash_thresh) together so build.ps1 stays coherent.
 - [ ] **T6 — Life cycle (the payoff).** Fruiting detection (biomass+resource > threshold),
       primordium growth, spore emission (new tips at a dispersal radius) → generational
       turnover. Atomic spawn / indirect dispatch as needed.

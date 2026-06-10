@@ -73,6 +73,8 @@ pub struct Params {
     pub forage_income: f32,      // resource produced per unit nutrient foraged
     pub adapt_rate: f32,         // biomass gained per unit flux (cord reinforcement)
     pub atrophy: f32,            // biomass decayed per step (prunes unused hyphae)
+    pub rival_avoid: f32,        // T5: repulsion from rival-colony biomass when steering
+    pub clash_thresh: f32,       // T5: rival biomass ahead that stops a tip (forms a zone line)
     pub mouse_x: f32,            // interactive nutrient drop (GPU layer): disk centre x
     pub mouse_y: f32,            // disk centre y
     pub mouse_r: f32,            // disk radius (<= 0 => no drop this frame)
@@ -104,6 +106,8 @@ impl Params {
             forage_income: 1.0,
             adapt_rate: 0.08,
             atrophy: 0.03,
+            rival_avoid: 1.0,
+            clash_thresh: 2.0,
             mouse_x: -1.0,
             mouse_y: -1.0,
             mouse_r: 0.0,
@@ -133,14 +137,6 @@ pub fn index(x: f32, y: f32, p: &Params) -> u32 {
     let xi = (wrap(x, p.width as f32)) as u32 % p.width;
     let yi = (wrap(y, p.height as f32)) as u32 % p.height;
     yi * p.width + xi
-}
-
-/// Sample a field `dist` ahead of the tip, `angle_off` off its heading.
-fn sense(tip: &Tip, angle_off: f32, field: &[f32], p: &Params) -> f32 {
-    let a = tip.heading + angle_off;
-    let sx = tip.x + a.cos() * p.sensor_dist;
-    let sy = tip.y + a.sin() * p.sensor_dist;
-    field[index(sx, sy, p) as usize]
 }
 
 /// Inoculate tip `i`: a germinating spore at center sends hyphae out radially.
@@ -199,10 +195,22 @@ pub fn grow_tip(
 ) -> Step {
     let home = index(tip.x, tip.y, p);
 
-    // chemotropism: steer toward the strongest nutrient ahead (Jones rule)
-    let l = sense(tip, p.sensor_angle, nutrient, p);
-    let c = sense(tip, 0.0, nutrient, p);
-    let r = sense(tip, -p.sensor_angle, nutrient, p);
+    // T5: biomass sign encodes colony (+ = colony 0, − = colony 1). A tip is
+    // attracted to nutrient and repelled by rival (opposite-sign) biomass — one
+    // combined signal. Single-colony fields have no rivals, so this reduces to
+    // plain nutrient chemotropism.
+    let my_sign = if tip.colony < 0.5 { 1.0 } else { -1.0 };
+    let sig = |off: f32| -> f32 {
+        let a = tip.heading + off;
+        let i = index(tip.x + a.cos() * p.sensor_dist, tip.y + a.sin() * p.sensor_dist, p) as usize;
+        let b = biomass[i];
+        let rival = if b * my_sign < 0.0 { -b * my_sign } else { 0.0 };
+        nutrient[i] - p.rival_avoid * rival
+    };
+    // steer toward the strongest combined signal ahead (Jones rule)
+    let l = sig(p.sensor_angle);
+    let c = sig(0.0);
+    let r = sig(-p.sensor_angle);
     let mut h = tip.heading;
     if c > l && c > r {
         // strongest ahead: hold
@@ -247,9 +255,28 @@ pub fn grow_tip(
     let ny = wrap(tip.y + h.sin() * p.move_len, p.height as f32);
     let cell = index(nx, ny, p);
 
-    // anastomosis: if we grew into an established cord, fuse (deposit, then die)
+    // T5 clash: growing head-on into a rival colony — stop at the boundary and
+    // deposit nothing. The gap left between the two colonies is the zone line.
+    let cb = biomass[cell as usize];
+    let cell_rival = if cb * my_sign < 0.0 { -cb * my_sign } else { 0.0 };
+    if cell_rival > p.clash_thresh {
+        let dead = Tip { heading: h, alive: 0.0, age: tip.age + 1.0, ..*tip };
+        return Step {
+            tip: dead,
+            cell: home,
+            home,
+            advanced: 0,
+            branched: 0,
+            child: Tip::DEAD,
+            forage,
+            resource_delta: gain,
+        };
+    }
+
+    // anastomosis: grew into our OWN established cord — fuse (deposit, then die)
+    let cell_own = if cb * my_sign > 0.0 { cb * my_sign } else { 0.0 };
     let mut alive = 1.0;
-    if tip.age > p.min_branch_age && biomass[cell as usize] > p.anastomosis_thresh {
+    if tip.age > p.min_branch_age && cell_own > p.anastomosis_thresh {
         alive = 0.0;
     }
 
@@ -302,11 +329,20 @@ pub struct Flow {
 /// Saturating conductivity between two biomass densities: ~0 in open space,
 /// →1 along thick cords. Saturating (rather than raw `min(B_i,B_j)`) keeps the
 /// solver stable (α ≤ ¼) no matter how thick cords grow in T3, and is itself
-/// biological (saturating uptake). `m = min(B_i,B_j)` so it stays symmetric —
-/// the property that makes the relaxation mass-conserving.
+/// biological (saturating uptake). Symmetric in `|B|`, the property that makes
+/// the relaxation mass-conserving.
+///
+/// T5: biomass **sign encodes colony** (+ = colony 0, − = colony 1). Resource
+/// conducts only between same-sign hyphae, so rival cells never exchange and the
+/// two colonies stay metabolically separate — a boundary forms for free. Empty
+/// cells (0) conduct nothing. A single-colony field is all one sign, so this
+/// reduces exactly to the plain saturating min.
 #[inline]
 pub fn conductivity(bi: f32, bj: f32, k_half: f32) -> f32 {
-    let m = bi.min(bj);
+    if bi == 0.0 || bj == 0.0 || (bi > 0.0) != (bj > 0.0) {
+        return 0.0;
+    }
+    let m = bi.abs().min(bj.abs());
     m / (m + k_half)
 }
 
@@ -832,6 +868,126 @@ mod tests {
         // no bias). Contrast the 2.5× gap when one route is genuinely shorter. The bound
         // is generous on purpose; the real signal is unmistakable.
         assert!(spread < 0.15, "equal routes should tie, got u={u:.3} d={d:.3} spread={spread:.3}");
+    }
+
+    // ---- T5: competition & zone lines (colony = sign of biomass) ------------
+
+    #[test]
+    fn conductivity_blocks_rival_colonies() {
+        let kh = 2.0;
+        // same colony (same sign) conducts; magnitude depends only on |B|
+        assert!(conductivity(3.0, 5.0, kh) > 0.0);
+        assert!(conductivity(-3.0, -5.0, kh) > 0.0);
+        assert!((conductivity(3.0, 5.0, kh) - conductivity(-3.0, -5.0, kh)).abs() < 1e-6);
+        // rival (opposite sign) never conducts — the metabolic boundary
+        assert_eq!(conductivity(3.0, -5.0, kh), 0.0);
+        assert_eq!(conductivity(-3.0, 5.0, kh), 0.0);
+        // empty cells conduct nothing
+        assert_eq!(conductivity(0.0, 5.0, kh), 0.0);
+    }
+
+    #[test]
+    fn tip_clashes_into_rival_and_stops() {
+        let mut p = params();
+        p.clash_thresh = 2.0;
+        let n = p.cells() as usize;
+        let nutrient = vec![0.0f32; n];
+        let resource = vec![10.0f32; n]; // growth not the limiter
+        let mut biomass = vec![0.0f32; n];
+        // colony-1 tip (sign −) heading +x into colony-0 (sign +) biomass ahead
+        let tip = Tip { x: 20.0, y: 20.0, heading: 0.0, colony: 1.0, alive: 1.0, age: 5.0 };
+        let nx = wrap(tip.x + p.move_len, p.width as f32);
+        biomass[index(nx, tip.y, &p) as usize] = p.clash_thresh + 1.0; // colony 0, rival
+        let step = grow_tip(&tip, &nutrient, &biomass, &resource, &p, 0);
+        assert_eq!(step.tip.alive, 0.0, "tip stops dead at the rival boundary");
+        assert_eq!(step.advanced, 0, "and does not advance into rival territory");
+        // a colony-0 tip sees the same biomass as its OWN — it advances (no clash)
+        let own = Tip { colony: 0.0, ..tip };
+        assert_eq!(grow_tip(&own, &nutrient, &biomass, &resource, &p, 0).advanced, 1);
+    }
+
+    #[test]
+    fn tip_steers_away_from_rival_biomass() {
+        let mut p = params();
+        p.rival_avoid = 5.0;
+        let n = p.cells() as usize;
+        let nutrient = vec![0.0f32; n]; // no food: only rival repulsion can steer
+        let resource = vec![10.0f32; n];
+        let mut biomass = vec![0.0f32; n];
+        let tip = Tip { x: 30.5, y: 24.5, heading: 0.0, colony: 1.0, alive: 1.0, age: 2.0 };
+        // colony-0 (rival) biomass at the LEFT sensor only
+        let lx = tip.x + (tip.heading + p.sensor_angle).cos() * p.sensor_dist;
+        let ly = tip.y + (tip.heading + p.sensor_angle).sin() * p.sensor_dist;
+        biomass[index(lx, ly, &p) as usize] = 3.0;
+        let step = grow_tip(&tip, &nutrient, &biomass, &resource, &p, 0);
+        assert!(step.tip.heading < tip.heading, "steers away from the rival on its left");
+        assert_eq!(step.advanced, 1, "and keeps growing (it veered, didn't clash)");
+    }
+
+    #[test]
+    fn two_colonies_meet_and_form_a_zone_line() {
+        // THE competition result (spalted-wood zone line): two colonies grow toward
+        // each other and form a permanent boundary neither crosses. Rival-avoidance
+        // off here to isolate the clash mechanism (steering is tested above).
+        let mut p = Params::default_for(40, 5, 4);
+        p.rival_avoid = 0.0;
+        p.growth_cost = 0.1;
+        p.forage_rate = 0.3;
+        p.forage_income = 1.0;
+        p.deposit = 1.0;
+        p.clash_thresh = 0.5; // a single rival deposit blocks
+        p.min_branch_age = 1e6; // no branching/anastomosis in this corridor
+        p.branch_prob = 0.0;
+        let w = p.width as usize;
+        let n = p.cells() as usize;
+        let row = 2usize;
+        let mut nutrient = vec![1.0f32; n];
+        let mut biomass = vec![0.0f32; n];
+        let mut resource = vec![0.0f32; n];
+
+        // mid-cell positions so the index never floors across a row boundary
+        let mut t0 = Tip { x: 4.5, y: 2.5, heading: 0.0, colony: 0.0, alive: 1.0, age: 0.0 };
+        let mut t1 = Tip { x: 35.5, y: 2.5, heading: core::f32::consts::PI, colony: 1.0, alive: 1.0, age: 0.0 };
+
+        for _ in 0..60 {
+            for (tip, sign) in [(&mut t0, 1.0f32), (&mut t1, -1.0f32)] {
+                if tip.alive <= 0.0 {
+                    continue;
+                }
+                let step = grow_tip(tip, &nutrient, &biomass, &resource, &p, 0);
+                let nu = nutrient[step.home as usize] - step.forage;
+                nutrient[step.home as usize] = if nu > 0.0 { nu } else { 0.0 };
+                resource[step.home as usize] += step.resource_delta;
+                if step.advanced == 1 {
+                    biomass[step.cell as usize] += p.deposit * sign; // colony sign on deposit
+                }
+                *tip = step.tip;
+            }
+        }
+
+        assert_eq!(t0.alive, 0.0, "colony 0 stopped at the boundary");
+        assert_eq!(t1.alive, 0.0, "colony 1 stopped at the boundary");
+
+        // colony-0 biomass (positive) is strictly left of colony-1 biomass (negative):
+        // they met but never interleaved — a clean zone line.
+        let (mut rightmost_pos, mut leftmost_neg) = (0usize, w);
+        let (mut pos, mut neg) = (0u32, 0u32);
+        for x in 0..w {
+            let b = biomass[row * w + x];
+            if b > 0.0 {
+                rightmost_pos = rightmost_pos.max(x);
+                pos += 1;
+            }
+            if b < 0.0 {
+                leftmost_neg = leftmost_neg.min(x);
+                neg += 1;
+            }
+        }
+        assert!(pos > 3 && neg > 3, "both colonies grew a cord ({pos} vs {neg} cells)");
+        assert!(
+            rightmost_pos < leftmost_neg,
+            "colonies never interleave: colony-0 ends at x{rightmost_pos}, colony-1 starts at x{leftmost_neg}"
+        );
     }
 
     #[test]
