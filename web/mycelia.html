@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Mycelia — a million-agent Rust simulation on your GPU</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #000; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+  #overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; background: #000; color: #ddd;
+    z-index: 10; text-align: center; gap: 14px; cursor: pointer;
+  }
+  #overlay h1 { font-weight: 600; font-size: clamp(22px, 4vw, 40px); letter-spacing: 0.5px; }
+  #overlay h1 b { color: #6cf; }
+  #overlay p { max-width: 560px; line-height: 1.5; color: #9aa; font-size: 14px; }
+  #overlay .go { margin-top: 6px; padding: 12px 28px; border: 1px solid #6cf; border-radius: 30px; color: #6cf; font-size: 15px; }
+  #hud {
+    position: fixed; left: 12px; bottom: 12px; z-index: 5; color: #7ff; opacity: 0.55;
+    font: 11px ui-monospace, monospace; pointer-events: none; text-shadow: 0 0 6px #000;
+  }
+  #panel {
+    position: fixed; top: 12px; right: 12px; z-index: 5; width: 230px;
+    background: rgba(8,10,14,0.72); border: 1px solid rgba(120,200,255,0.18);
+    border-radius: 12px; padding: 12px 14px; color: #bcd; font-size: 12px;
+    backdrop-filter: blur(8px); transition: transform .25s, opacity .25s;
+  }
+  #panel.hidden { transform: translateX(260px); opacity: 0; }
+  #panel h2 { font-size: 12px; color: #6cf; margin-bottom: 8px; letter-spacing: 1px; text-transform: uppercase; }
+  #panel label { display: block; margin: 9px 0 2px; color: #89a; }
+  #panel input[type=range] { width: 100%; accent-color: #6cf; }
+  #panel .row { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  #panel button {
+    flex: 1; min-width: 60px; padding: 6px 4px; background: rgba(108,204,255,0.1);
+    border: 1px solid rgba(108,204,255,0.3); color: #bdf; border-radius: 7px; cursor: pointer; font-size: 11px;
+  }
+  #panel button:hover { background: rgba(108,204,255,0.22); }
+  #toggle {
+    position: fixed; top: 12px; right: 12px; z-index: 6; width: 34px; height: 34px;
+    background: rgba(8,10,14,0.72); border: 1px solid rgba(120,200,255,0.18); border-radius: 9px;
+    color: #6cf; cursor: pointer; display: none; align-items: center; justify-content: center; font-size: 16px;
+  }
+  #cap { position: fixed; left: 12px; top: 12px; z-index: 5; color: #678; font-size: 11px; opacity: 0.5; max-width: 300px; line-height: 1.4; }
+  #cap a { color: #6cf; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="cap">Mycelia — multi-species slime mold. The simulation kernel is unit-tested Rust, compiled to your GPU by <a href="https://github.com/Rust-GPU/rust-gpu" target="_blank">rust-gpu</a>. Drag to attract · Shift-drag to repel.</div>
+<div id="hud"></div>
+<button id="toggle">⚙</button>
+<div id="panel">
+  <h2>Mycelia</h2>
+  <label>agents: <span id="vAgents"></span></label><input id="agents" type="range" min="100000" max="6000000" step="100000">
+  <label>sensor angle</label><input id="sensorAngle" type="range" min="0.1" max="1.4" step="0.01">
+  <label>sensor distance</label><input id="sensorDist" type="range" min="3" max="30" step="0.5">
+  <label>turn speed</label><input id="turnSpeed" type="range" min="0.1" max="1.2" step="0.01">
+  <label>decay</label><input id="decay" type="range" min="0.85" max="0.995" step="0.001">
+  <label>rival repulsion</label><input id="otherRepel" type="range" min="0" max="2.5" step="0.05">
+  <label>exposure</label><input id="exposure" type="range" min="0.2" max="4" step="0.05">
+  <div class="row">
+    <button data-preset="networks">Networks</button>
+    <button data-preset="cells">Cells</button>
+    <button data-preset="storm">Storm</button>
+  </div>
+  <div class="row">
+    <button id="reset">Reset</button>
+    <button id="pause">Pause</button>
+    <button id="shot">Save PNG</button>
+  </div>
+</div>
+
+<div id="overlay">
+  <h1>Mycelia · <b>a million-agent Rust sim on your GPU</b></h1>
+  <p>Three colonies of slime-mold agents chase their own trail and flee each other, carving glowing territories. Every agent's behavior is ordinary, unit-tested Rust — compiled to your GPU by rust-gpu and verifiable bit-for-bit on the CPU.</p>
+  <div class="go">click to begin →</div>
+</div>
+
+<script>
+const PRESETS = {
+  networks: { sensorAngle: 0.42, sensorDist: 9, turnSpeed: 0.32, decay: 0.86, otherRepel: 1.3, deposit: 0.16, moveSpeed: 1.0, exposure: 2.6, diffuseRate: 0.28 },
+  cells:    { sensorAngle: 1.05, sensorDist: 16, turnSpeed: 0.85, decay: 0.92, otherRepel: 2.0, deposit: 0.12, moveSpeed: 0.9, exposure: 2.2, diffuseRate: 0.5 },
+  storm:    { sensorAngle: 0.26, sensorDist: 6, turnSpeed: 0.2, decay: 0.975, otherRepel: 0.5, deposit: 0.05, moveSpeed: 1.7, exposure: 1.6, diffuseRate: 0.22 },
+};
+
+const state = {
+  agents: 1000000,
+  moveSpeed: 1.0, turnSpeed: 0.34, sensorAngle: 0.4, sensorDist: 9,
+  deposit: 0.09, decay: 0.95, selfAttract: 1.0, otherRepel: 1.2,
+  mouseX: -1, mouseY: -1, mouseForce: 0, mouseRadius: 140, exposure: 2.0, diffuseRate: 0.32,
+  paused: false,
+};
+
+const isAuto = new URLSearchParams(location.search).has("auto");
+const beacon = (m) => fetch("/AUTO/" + encodeURIComponent(m)).catch(() => {});
+const hud = document.getElementById("hud");
+const status = (m) => { hud.textContent = m; };
+
+let device, ctx, format, W, H, NCELLS;
+let bufParams, bufAgents, trail = [], bufColor, bufDims;
+let pipeSpawn, pipeUpdate, pipeDiffuse, pipeRender, pipePresent;
+let bgPresent;
+let cur = 0, frame = 0, running = false;
+
+function paramsBytes() {
+  const ab = new ArrayBuffer(80);
+  const u = new Uint32Array(ab), f = new Float32Array(ab);
+  u[0] = W; u[1] = H; u[2] = state.agents; u[3] = frame;
+  f[4] = state.moveSpeed; f[5] = state.turnSpeed; f[6] = state.sensorAngle; f[7] = state.sensorDist;
+  f[8] = state.deposit; f[9] = state.decay; f[10] = state.selfAttract; f[11] = state.otherRepel;
+  f[12] = state.mouseX; f[13] = state.mouseY; f[14] = state.mouseForce; f[15] = state.mouseRadius;
+  f[16] = state.exposure; f[17] = state.diffuseRate;
+  return ab;
+}
+
+const PRESENT_WGSL = `
+@group(0) @binding(0) var<storage, read> color: array<u32>;
+@group(0) @binding(1) var<uniform> dims: vec2<u32>;
+@vertex fn vmain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+  var p = array<vec2<f32>, 3>(vec2<f32>(-1.,-1.), vec2<f32>(3.,-1.), vec2<f32>(-1.,3.));
+  return vec4<f32>(p[vi], 0., 1.);
+}
+@fragment fn fmain(@builtin(position) fc: vec4<f32>) -> @location(0) vec4<f32> {
+  let x = u32(fc.x); let y = u32(fc.y);
+  if (x >= dims.x || y >= dims.y) { return vec4<f32>(0.,0.,0.,1.); }
+  let v = color[y * dims.x + x];
+  let r = f32(v & 0xffu) / 255.;
+  let g = f32((v >> 8u) & 0xffu) / 255.;
+  let b = f32((v >> 16u) & 0xffu) / 255.;
+  return vec4<f32>(r, g, b, 1.);
+}`;
+
+async function init() {
+  if (!navigator.gpu) throw new Error("WebGPU not available");
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+  if (!adapter) throw new Error("no GPU adapter");
+  const lim = adapter.limits;
+  device = await adapter.requestDevice({
+    requiredLimits: {
+      maxStorageBufferBindingSize: lim.maxStorageBufferBindingSize,
+      maxBufferSize: lim.maxBufferSize,
+      maxComputeWorkgroupsPerDimension: lim.maxComputeWorkgroupsPerDimension,
+    },
+  });
+  device.addEventListener?.("uncapturederror", (e) => { status("gpu error: " + e.error.message); console.error(e.error); });
+
+  const canvas = document.getElementById("c");
+  ctx = canvas.getContext("webgpu");
+  format = navigator.gpu.getPreferredCanvasFormat();
+
+  const dpr = Math.min(devicePixelRatio || 1, 1.5);
+  W = Math.floor((isAuto ? 960 : innerWidth) * dpr);
+  H = Math.floor((isAuto ? 600 : innerHeight) * dpr);
+  canvas.width = W; canvas.height = H;
+  NCELLS = W * H;
+  ctx.configure({ device, format, alphaMode: "opaque" });
+
+  const code = await (await fetch("./kernels.wgsl", { cache: "no-store" })).text();
+  const module = device.createShaderModule({ code });
+  const present = device.createShaderModule({ code: PRESENT_WGSL });
+
+  pipeSpawn = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "mycelia_spawn_cs" } });
+  pipeUpdate = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "mycelia_update_cs" } });
+  pipeDiffuse = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "mycelia_diffuse_cs" } });
+  pipeRender = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "mycelia_render_cs" } });
+  pipePresent = device.createRenderPipeline({
+    layout: "auto",
+    vertex: { module: present, entryPoint: "vmain" },
+    fragment: { module: present, entryPoint: "fmain", targets: [{ format }] },
+    primitive: { topology: "triangle-list" },
+  });
+
+  allocate();
+  spawn();
+}
+
+function allocate() {
+  const S = (n, extra = 0) => device.createBuffer({ size: n, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC | extra });
+  bufParams = device.createBuffer({ size: 80, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  bufAgents = S(state.agents * 16);
+  const trailBytes = 3 * NCELLS * 4;
+  trail = [S(trailBytes), S(trailBytes)];
+  bufColor = S(NCELLS * 4);
+  bufDims = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(bufDims, 0, new Uint32Array([W, H, 0, 0]));
+  bgPresent = device.createBindGroup({
+    layout: pipePresent.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: bufColor } }, { binding: 1, resource: { buffer: bufDims } }],
+  });
+}
+
+function spawn() {
+  // clear trails
+  for (const t of trail) device.queue.writeBuffer(t, 0, new Float32Array(3 * NCELLS));
+  frame = 0; cur = 0;
+  device.queue.writeBuffer(bufParams, 0, paramsBytes());
+  const bg = device.createBindGroup({
+    layout: pipeSpawn.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: bufParams } }, { binding: 1, resource: { buffer: bufAgents } }],
+  });
+  const enc = device.createCommandEncoder();
+  const p = enc.beginComputePass();
+  p.setPipeline(pipeSpawn); p.setBindGroup(0, bg);
+  p.dispatchWorkgroups(Math.ceil(state.agents / 64));
+  p.end();
+  device.queue.submit([enc.finish()]);
+}
+
+function frameStep() {
+  device.queue.writeBuffer(bufParams, 0, paramsBytes());
+  const tCur = trail[cur], tNext = trail[1 - cur];
+  const enc = device.createCommandEncoder();
+
+  // 1. update: sense+steer+move+deposit into tCur
+  {
+    const bg = device.createBindGroup({ layout: pipeUpdate.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: bufParams } },
+      { binding: 1, resource: { buffer: bufAgents } },
+      { binding: 2, resource: { buffer: tCur } }] });
+    const p = enc.beginComputePass();
+    p.setPipeline(pipeUpdate); p.setBindGroup(0, bg);
+    p.dispatchWorkgroups(Math.ceil(state.agents / 64)); p.end();
+  }
+  // 2. diffuse: tCur -> tNext
+  {
+    const bg = device.createBindGroup({ layout: pipeDiffuse.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: bufParams } },
+      { binding: 1, resource: { buffer: tCur } },
+      { binding: 2, resource: { buffer: tNext } }] });
+    const p = enc.beginComputePass();
+    p.setPipeline(pipeDiffuse); p.setBindGroup(0, bg);
+    p.dispatchWorkgroups(Math.ceil(W / 8), Math.ceil(H / 8)); p.end();
+  }
+  // 3. render: tNext -> color
+  {
+    const bg = device.createBindGroup({ layout: pipeRender.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: bufParams } },
+      { binding: 1, resource: { buffer: tNext } },
+      { binding: 2, resource: { buffer: bufColor } }] });
+    const p = enc.beginComputePass();
+    p.setPipeline(pipeRender); p.setBindGroup(0, bg);
+    p.dispatchWorkgroups(Math.ceil(W / 8), Math.ceil(H / 8)); p.end();
+  }
+  // 4. present
+  {
+    const pass = enc.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: "clear", storeOp: "store" }] });
+    pass.setPipeline(pipePresent); pass.setBindGroup(0, bgPresent);
+    pass.draw(3); pass.end();
+  }
+  device.queue.submit([enc.finish()]);
+  cur = 1 - cur; frame++;
+}
+
+let fpsT = performance.now(), fpsN = 0, fps = 0;
+function loop() {
+  if (!running) return;
+  if (!state.paused) frameStep();
+  fpsN++;
+  const now = performance.now();
+  if (now - fpsT > 500) { fps = Math.round(fpsN * 1000 / (now - fpsT)); fpsN = 0; fpsT = now; status(`${(state.agents/1e6).toFixed(1)}M agents · ${W}×${H} · ${fps} fps`); }
+  requestAnimationFrame(loop);
+}
+
+// ---------- controls ----------
+function bindControls() {
+  const map = [["agents","agents"],["sensorAngle","sensorAngle"],["sensorDist","sensorDist"],["turnSpeed","turnSpeed"],["decay","decay"],["otherRepel","otherRepel"],["exposure","exposure"]];
+  for (const [id, key] of map) {
+    const el = document.getElementById(id);
+    el.value = state[key];
+    el.oninput = () => {
+      state[key] = parseFloat(el.value);
+      if (id === "agents") { document.getElementById("vAgents").textContent = (state.agents/1e6).toFixed(1)+"M"; reallocAgents(); }
+    };
+  }
+  document.getElementById("vAgents").textContent = (state.agents/1e6).toFixed(1)+"M";
+  document.querySelectorAll("[data-preset]").forEach(b => b.onclick = () => applyPreset(b.dataset.preset));
+  document.getElementById("reset").onclick = () => spawn();
+  document.getElementById("pause").onclick = (e) => { state.paused = !state.paused; e.target.textContent = state.paused ? "Play" : "Pause"; };
+  document.getElementById("shot").onclick = saveShot;
+  const panel = document.getElementById("panel"), toggle = document.getElementById("toggle");
+  toggle.onclick = () => { panel.classList.remove("hidden"); toggle.style.display = "none"; };
+  // double-click canvas hides panel for clean view
+  document.getElementById("c").ondblclick = () => { panel.classList.add("hidden"); toggle.style.display = "flex"; };
+}
+
+function applyPreset(name) {
+  Object.assign(state, PRESETS[name]);
+  for (const id of ["sensorAngle","sensorDist","turnSpeed","decay","otherRepel","exposure"]) {
+    const el = document.getElementById(id); if (el) el.value = state[id];
+  }
+  spawn();
+}
+
+let reallocPending = null;
+function reallocAgents() {
+  // debounce: agent buffer realloc is cheap but reset the colony
+  clearTimeout(reallocPending);
+  reallocPending = setTimeout(() => { bufAgents.destroy?.(); bufAgents = device.createBuffer({ size: state.agents * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC }); spawn(); }, 150);
+}
+
+function pointer(e, down) {
+  const r = e.target.getBoundingClientRect();
+  const dpr = W / r.width;
+  state.mouseX = (e.clientX - r.left) * dpr;
+  state.mouseY = (e.clientY - r.top) * dpr;
+  if (down !== undefined) state.mouseForce = down ? (e.shiftKey ? -1.4 : 1.4) : 0;
+}
+function wireMouse() {
+  const c = document.getElementById("c");
+  c.addEventListener("pointerdown", (e) => { pointer(e, true); c.setPointerCapture(e.pointerId); });
+  c.addEventListener("pointermove", (e) => pointer(e));
+  c.addEventListener("pointerup", (e) => { state.mouseForce = 0; });
+  c.addEventListener("pointerleave", () => { state.mouseForce = 0; state.mouseX = -1; });
+}
+
+async function saveShot() {
+  const c = document.getElementById("c");
+  // re-render one frame to be safe, then read the canvas
+  c.toBlob((blob) => {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "mycelia.png"; a.click();
+  });
+}
+
+// ---------- boot ----------
+async function boot() {
+  try {
+    await init();
+    bindControls();
+    wireMouse();
+    running = true;
+    document.getElementById("overlay").remove();
+    applyPreset("networks");
+    loop();
+  } catch (e) {
+    status("error: " + e.message); console.error(e);
+    if (isAuto) beacon("MYCELIA-ERROR " + e.message);
+  }
+}
+
+document.getElementById("overlay").onclick = boot;
+
+if (isAuto) {
+  (async () => {
+    try {
+      await init();
+      applyPreset("networks");
+      running = true;
+      document.getElementById("overlay")?.remove();
+      // run a burst of frames headless and report that pixels are non-black
+      for (let i = 0; i < 220; i++) frameStep();
+      loop(); // keep rendering so a --screenshot captures a live frame
+      // read back the color buffer to confirm the field is alive
+      const rb = device.createBuffer({ size: NCELLS * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const enc = device.createCommandEncoder();
+      enc.copyBufferToBuffer(bufColor, 0, rb, 0, NCELLS * 4);
+      device.queue.submit([enc.finish()]);
+      await rb.mapAsync(GPUMapMode.READ);
+      const px = new Uint32Array(rb.getMappedRange());
+      let lit = 0, rsum = 0, gsum = 0, bsum = 0;
+      for (let i = 0; i < px.length; i += 97) {
+        const v = px[i];
+        const r = v & 255, g = (v >> 8) & 255, b = (v >> 16) & 255;
+        if (r + g + b > 12) lit++;
+        rsum += r; gsum += g; bsum += b;
+      }
+      const n = Math.ceil(px.length / 97);
+      beacon(`MYCELIA frames=${frame} lit=${(100*lit/n).toFixed(1)}% meanRGB=${(rsum/n).toFixed(1)},${(gsum/n).toFixed(1)},${(bsum/n).toFixed(1)} agents=${state.agents} ${W}x${H}`);
+      beacon("MYCELIA-DONE");
+    } catch (e) { beacon("MYCELIA-ERROR " + e.message); }
+  })();
+}
+</script>
+</body>
+</html>

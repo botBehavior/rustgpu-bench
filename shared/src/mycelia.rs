@@ -58,7 +58,8 @@ pub struct Params {
     pub mouse_y: f32,
     pub mouse_force: f32, // >0 attract toward cursor, <0 repel, 0 off
     pub mouse_radius: f32,
-    pub exposure: f32, // render gain
+    pub exposure: f32,     // render gain
+    pub diffuse_rate: f32, // 0 = no blur (sharp veins), 1 = full 3×3 mean (smooth)
 }
 
 impl Params {
@@ -81,6 +82,7 @@ impl Params {
             mouse_force: 0.0,
             mouse_radius: 120.0,
             exposure: 1.0,
+            diffuse_rate: 1.0,
         }
     }
     #[inline]
@@ -210,7 +212,12 @@ pub fn diffuse_at(trail: &[f32], c: u32, x: u32, y: u32, p: &Params) -> f32 {
         }
         dy += 1;
     }
-    (sum / 9.0) * p.decay
+    let mean = sum / 9.0;
+    let center = trail[(base + y * w + x) as usize];
+    // blend center toward the neighborhood mean by diffuse_rate, then decay.
+    // rate<1 keeps trails sharp so agents reinforce thin filaments (the look).
+    let blended = center + (mean - center) * p.diffuse_rate;
+    blended * p.decay
 }
 
 /// Render math — kept in tested Rust on purpose. Maps the three trail-channel
