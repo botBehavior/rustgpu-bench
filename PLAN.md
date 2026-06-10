@@ -9,13 +9,13 @@ completed item with trailer `Co-Authored-By: Ferra <Ferra@Fable5>`. Rules of con
 
 ## Phase A — version control foundation (GREEN)
 
-- [ ] A1. `git init` in `gpu/` (rustGuru root stays a non-repo; gpu/ is self-contained).
+- [x] (2026-06-10 done; repo on main, .gitignore as specced) A1. `git init` in `gpu/` (rustGuru root stays a non-repo; gpu/ is self-contained).
       `.gitignore`: `target/`, `out-*.ppm`, `shaders/spv/`, `shaders/wgsl/`,
       `web/runner_web.wasm`, `web/kernels.wgsl`, `drafts/` (drafts stay local-only).
       Keep: all sources, `Cargo.lock`, `RESULTS.md`, `bench-results.json`, `PLAN.md`.
-- [ ] A2. Initial commit (whole workspace, building + tests green first). Then tag
+- [x] (2026-06-10 commit 2b8f940, tag bench-2026-06-10, tests green) A2. Initial commit (whole workspace, building + tests green first). Then tag
       `bench-2026-06-10` on the commit containing today's bench-results.json.
-- [ ] A3. README.md for the repo: what it is (tri-target demo + first rust-gpu vs
+- [x] (2026-06-10 written, included in initial commit) A3. README.md for the repo: what it is (tri-target demo + first rust-gpu vs
       hand-WGSL benchmark), results table, repro commands, gotcha list, honest caveats.
       Written for eventual public eyes, lives private until E1.
 
@@ -90,4 +90,4 @@ completed item with trailer `Co-Authored-By: Ferra <Ferra@Fable5>`. Rules of con
 
 ## Loop log (append one line per completed item: date, item, outcome)
 
-(none yet)
+- 2026-06-10 A1+A2+A3: repo initialized, initial commit 2b8f940 (27 files), tag bench-2026-06-10, README written. Phase A complete.
