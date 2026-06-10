@@ -110,6 +110,45 @@ Web page is the primary artifact; everything kernel-side is shared Rust, tested 
       needs an Approvals line). Also decide: keep in rustgpu-bench or extract to its own
       repo.
 
+## Phase H — the cargo-test-able shader library (GREEN except crates.io publish)
+
+Original project #3, green-lit by Carter 2026-06-10 ("complete both"). Working name
+`gpu-shader-lib` (final crate name + any crates.io publish = RED gate). The pitch: shader
+math as an ordinary documented, unit-tested `no_std` crate — compiles to SPIR-V and runs
+under `cargo test`, a DX story WGSL structurally cannot tell.
+
+- [ ] H1. `shaderlib/` crate: `sdf2` (circle, rounded box, segment, union/subtract/
+      smooth-min), `noise` (hash, value noise, FBM with bounded octaves), `color`
+      (hsv→rgb, sRGB encode/decode, Reinhard + ACES-fit tonemaps, IQ cosine palette).
+      All `no_std`-compatible, SPIR-V-subset-safe (no checked math, no usize in data),
+      unit tests for known values/ranges/symmetries. Workspace member; tests green.
+- [ ] H2. Prove it on GPU: 3-4 demo "fragment-style" compute entries in `shaders/`
+      (uv → color via shaderlib: SDF scene, FBM clouds, palette plasma), rendered to
+      PNG via the existing runner plumbing; pixel-sanity vs CPU evaluation of the same
+      functions (statistical gate as with the tracer). Commit images to assets/.
+- [ ] H3. Docs: rustdoc on every public fn, README section ("the shader library"),
+      note in RESULTS/ANALYSIS if any kernel hits a subset edge worth recording.
+
+## Phase I — "Rust Shadertoy" gallery (GREEN to build/deploy; announcing = RED)
+
+Original project #5, v1 = precompiled gallery (no server-side compile).
+
+- [ ] I1. 4-6 launch shaders built on shaderlib (plasma, FBM terrain-shaded clouds,
+      SDF scene w/ soft shadows, raymarched blobs (the amoeba!), tunnel, mandelbrot),
+      each a small `#[spirv]` entry + its Rust source displayed verbatim.
+- [ ] I2. `web/gallery.html`: thumbnail grid → click opens live WebGPU render with the
+      Rust source side-by-side (sources shipped as text next to the page; entry picked
+      per shader). Time uniform for animation. wasm-CPU fallback optional, skip if it
+      drags.
+- [ ] I3. Headless verify (?auto beacons per entry), deploy to docs/ with cross-links
+      from index + sim pages, README section. Announcing anywhere = RED.
+
+## Phase J — what's next (proposal only)
+
+- [ ] J1. After H+I ship: write a "novel projects" slate (5+ ideas that do NOT retread
+      demo/benchmark/sim/library/gallery — think: things only this stack can do) into
+      drafts/novel-projects.md for Carter to pick from. Proposal only.
+
 ## Approvals (Carter writes lines here, e.g. `approved: E1 name=rustgpu-bench 2026-06-11`)
 
 - approved: E1 name=rustgpu-bench (Carter in chat, 2026-06-10)

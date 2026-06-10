@@ -1,0 +1,16 @@
+[package]
+name = "gpu-shader-lib"
+version = "0.1.0"
+edition = "2021"
+description = "Shader math as ordinary Rust: SDFs, noise, color — unit-tested on CPU, compiled to SPIR-V by rust-gpu"
+license = "MIT OR Apache-2.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(target_arch, values("spirv"))'] }
+
+[target.'cfg(target_arch = "spirv")'.dependencies]
+spirv-std = "=0.10.0-alpha.1"
+glam = { version = ">=0.30.8, <0.31", default-features = false, features = ["libm"] }
+
+[target.'cfg(not(target_arch = "spirv"))'.dependencies]
+glam = { version = ">=0.30.8, <0.31", features = ["std"] }

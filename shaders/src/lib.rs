@@ -5,6 +5,46 @@
 use spirv_std::glam::UVec3;
 use spirv_std::spirv;
 
+use gpu_shader_lib::{color, noise, sdf2};
+use spirv_std::glam::{vec2, Vec3};
+#[cfg(target_arch = "spirv")]
+use spirv_std::num_traits::Float;
+
+/// Gallery smoke entry: every shaderlib module in one image.
+/// params: [width, height, time_ms, _pad]; out: rgb f32 per pixel.
+#[spirv(compute(threads(8, 8)))]
+pub fn demo_plasma_cs(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &[u32; 4],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] out: &mut [f32],
+) {
+    let w = params[0];
+    let h = params[1];
+    if id.x >= w || id.y >= h {
+        return;
+    }
+    let t = params[2] as f32 * 1.0e-3;
+    let res = vec2(w as f32, h as f32);
+    let uv = (vec2(id.x as f32, id.y as f32) - 0.5 * res) / res.y;
+
+    // FBM-warped cosine-palette plasma, masked by a smooth-union SDF scene
+    let n = noise::fbm2(uv * 3.0 + vec2(t * 0.3, -t * 0.2), 5, 7);
+    let d = sdf2::smooth_union(
+        sdf2::circle(uv - vec2(0.25 * (t * 0.7).cos(), 0.0), 0.35),
+        sdf2::rounded_box(uv + vec2(0.25 * (t * 0.5).sin(), 0.0), vec2(0.28, 0.18), 0.05),
+        0.25,
+    );
+    let glow = (-6.0 * d.abs()).exp();
+    let base = color::palette_rainbow(n + t * 0.05);
+    let lit = base * (0.25 + 0.75 * glow) + Vec3::splat(glow * glow * 0.6);
+    let c = color::srgb_encode(color::tonemap_aces(lit));
+
+    let base_i = ((id.y * w + id.x) * 3) as usize;
+    out[base_i] = c.x;
+    out[base_i + 1] = c.y;
+    out[base_i + 2] = c.z;
+}
+
 use gpu_shared::physarum::{Agent, SimParams};
 use gpu_shared::RenderParams;
 

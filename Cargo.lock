@@ -356,10 +356,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpu-shader-lib"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "spirv-std",
+]
+
+[[package]]
 name = "gpu-shaders"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "gpu-shader-lib",
  "gpu-shared",
  "spirv-std",
 ]

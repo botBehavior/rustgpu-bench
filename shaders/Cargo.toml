@@ -9,6 +9,7 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 spirv-std = "=0.10.0-alpha.1"
 gpu-shared = { path = "../shared" }
+gpu-shader-lib = { path = "../shaderlib" }
 # spirv-std declares open-ended `glam >= 0.30.8`; 0.31+ breaks its imports.
 # Pin to the 0.30 line the 0.10.0-alpha.1 release was tested against.
 glam = { version = ">=0.30.8, <0.31", default-features = false, features = ["libm"] }
