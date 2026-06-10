@@ -117,7 +117,7 @@ Original project #3, green-lit by Carter 2026-06-10 ("complete both"). Working n
 math as an ordinary documented, unit-tested `no_std` crate — compiles to SPIR-V and runs
 under `cargo test`, a DX story WGSL structurally cannot tell.
 
-- [ ] H1. `shaderlib/` crate: `sdf2` (circle, rounded box, segment, union/subtract/
+- [x] (2026-06-10 c7025ca: 13 tests green, demo_plasma_cs proves full lib compiles to SPIR-V) H1. `shaderlib/` crate: `sdf2` (circle, rounded box, segment, union/subtract/
       smooth-min), `noise` (hash, value noise, FBM with bounded octaves), `color`
       (hsv→rgb, sRGB encode/decode, Reinhard + ACES-fit tonemaps, IQ cosine palette).
       All `no_std`-compatible, SPIR-V-subset-safe (no checked math, no usize in data),
@@ -165,3 +165,4 @@ Original project #5, v1 = precompiled gallery (no server-side compile).
 - 2026-06-10 E1–E3: repo public (botBehavior/rustgpu-bench), Pages live, discussion #614 posted upstream. E4 awaiting Carter. F2 thread-watch now ACTIVE on #614.
 - 2026-06-10 F3+G1: Phase G (Physarum) green-lit and started; kernels + tests + entries committed (c1947e3). #614: 0 replies yet.
 - 2026-06-10 G2+G3: sim verified GPU-vs-CPU (1-agent bit-identical both paths); web sim live at /sim.html — 256k agents @ 12.4 ms/frame headless-verified, wasm fallback works. Only G4 (publish gate, RED) + E4 + F-watches remain.
+- 2026-06-10 H+I+J phases added (Carter: "complete both" + novel-projects slate after). H1 done (c7025ca): shaderlib with 13 tests, SPIR-V-proven via demo_plasma_cs.
