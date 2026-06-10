@@ -275,7 +275,7 @@ The durable contribution: make rust-gpu *trustworthy*. Widen the differential fu
 a categorized bug corpus + CI-shaped harness, offered against rust-gpu #315. Spec in
 `EXPERIMENTS.md` (Experiment 2). Start: `tools/diff-fuzz/src/main.rs`.
 
-- [ ] P1. Widen the integer grammar: function calls (cross-fn inlining = riskiest
+- [x] (2026-06-10 270d68e/fdb6206: cross-function calls added (leaf callees, depth-1 inline); campaign 1440 fns / 5.9M cmp / 0 findings — call lowering correct; deep-chain inlining hang = Class B in conformance/NOTES.md. structs/match/early-return deferred — P2 floats is higher-value new territory) P1. Widen the integer grammar: function calls (cross-fn inlining = riskiest
       legalizer path), nested structs, `match`, early returns. Run a campaign; auto-bisect findings.
 - [ ] P2. Float domain: f32 ops with ULP-tolerant comparison + a divergence classifier
       (separate miscompile from legitimate fma/transcendental ulp). The new-territory axis.
