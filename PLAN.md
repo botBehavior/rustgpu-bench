@@ -89,7 +89,7 @@ extraction to its own repo can be decided at the G4 gate). Hundreds of thousands
 agents: sense trail → steer → move → deposit; trail diffuses + decays; render the trail.
 Web page is the primary artifact; everything kernel-side is shared Rust, tested on CPU.
 
-- [ ] G1. `shared/src/physarum.rs`: Agent + SimParams (`#[repr(C)]`, u32/f32 only),
+- [x] (2026-06-10 c1947e3: kernels + 5 tests + 3 entries, SPIR-V compiles clean) G1. `shared/src/physarum.rs`: Agent + SimParams (`#[repr(C)]`, u32/f32 only),
       agent-update kernel (sense L/C/R, steer, move, wrap, deposit) and diffuse+decay
       kernel as pure functions; unit tests (determinism, wrap, decay bounds, steering).
       v1 uses non-atomic deposits — races lose a few deposits visually, fine; determinism
@@ -124,3 +124,4 @@ Web page is the primary artifact; everything kernel-side is shared Rust, tested 
 - 2026-06-10 C1–C3: cold-repro PASSED end-to-end, browser steady-state 3.6 ms (~260× vs wasm), hero image. Phase C complete.
 - 2026-06-10 D1–D4: all three drafts written to drafts/ (awaiting-review), Carter notified. Phase D complete. Only RED gates (E) + steady-state (F) remain.
 - 2026-06-10 E1–E3: repo public (botBehavior/rustgpu-bench), Pages live, discussion #614 posted upstream. E4 awaiting Carter. F2 thread-watch now ACTIVE on #614.
+- 2026-06-10 F3+G1: Phase G (Physarum) green-lit and started; kernels + tests + entries committed (c1947e3). #614: 0 replies yet.
