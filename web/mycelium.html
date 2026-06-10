@@ -90,6 +90,7 @@ const state = {
   minBranchAge: 6.0, anastomosisThresh: 6.0,
   alpha: 0.2, kHalf: 2.0, growthCost: 0.45, forageIncome: 1.0,
   adaptRate: 0.1, atrophy: 0.05,
+  rivalAvoid: 1.0, clashThresh: 2.0,
   mouseX: -1, mouseY: -1, mouseR: 0, mouseFood: 6.0,
   exposure: 1.4,
   transportK: 6,
@@ -107,17 +108,18 @@ let pipeScatter, pipeGrow, pipeTransport, pipeAdapt, pipeRender, pipePresent;
 let bgPresent;
 let resCur = 0, frame = 0, running = false;
 
-// Params is 26 x 4 bytes = 104, matching gpu_shared::mycelium::Params (repr(C), all u32/f32).
+// Params is 28 x 4 bytes = 112, matching gpu_shared::mycelium::Params (repr(C), all u32/f32).
 function paramsBytes() {
-  const ab = new ArrayBuffer(104);
+  const ab = new ArrayBuffer(112);
   const u = new Uint32Array(ab), f = new Float32Array(ab);
   u[0] = W; u[1] = H; u[2] = state.nTips; u[3] = frame;
   f[4] = state.moveLen; f[5] = state.sensorAngle; f[6] = state.sensorDist; f[7] = state.turn;
   f[8] = state.deposit; f[9] = state.forageRate; f[10] = state.branchProb; f[11] = state.branchAngle;
   f[12] = state.minBranchAge; f[13] = state.anastomosisThresh; f[14] = state.alpha; f[15] = state.kHalf;
   f[16] = state.growthCost; f[17] = state.forageIncome; f[18] = state.adaptRate; f[19] = state.atrophy;
-  f[20] = state.mouseX; f[21] = state.mouseY; f[22] = state.mouseR; f[23] = state.mouseFood;
-  f[24] = state.exposure; u[25] = state.nTips; // seed_tips == n_tips: every scattered tip alive
+  f[20] = state.rivalAvoid; f[21] = state.clashThresh;
+  f[22] = state.mouseX; f[23] = state.mouseY; f[24] = state.mouseR; f[25] = state.mouseFood;
+  f[26] = state.exposure; u[27] = state.nTips; // seed_tips == n_tips: every scattered tip alive
   return ab;
 }
 
@@ -187,7 +189,7 @@ async function init() {
 
 function allocate() {
   const S = (n) => device.createBuffer({ size: n, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-  bufParams = device.createBuffer({ size: 104, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  bufParams = device.createBuffer({ size: 112, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   bufTips = S(state.nTips * 24);          // Tip = 6 x f32
   bufNutrient = S(NCELLS * 4);
   bufBiomass = S(NCELLS * 4);
