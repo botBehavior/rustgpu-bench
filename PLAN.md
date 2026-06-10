@@ -95,10 +95,10 @@ Web page is the primary artifact; everything kernel-side is shared Rust, tested 
       v1 uses non-atomic deposits — races lose a few deposits visually, fine; determinism
       verified at single-agent level (note this honestly). `#[spirv]` entries:
       `physarum_update_cs`, `physarum_diffuse_cs` (ping-pong trail buffers).
-- [ ] G2. GPU verify: extend a runner (or small sim-verify bin) to run 1 agent + diffuse
+- [x] (2026-06-10 runner-native --sim: spawn parity, 1-agent x20 bit-identical both paths, diffuse 6e-8, 10k smoke PASS) G2. GPU verify: extend a runner (or small sim-verify bin) to run 1 agent + diffuse
       N steps on GPU vs CPU, exact/statistical compare per kernel; plus a multi-agent
       smoke (total trail mass sanity). Commit with tests green.
-- [ ] G3. Web page `web/sim.html`: WebGPU, three dispatches per frame
+- [x] (2026-06-10 7ca6090: headless-verified 12.4 ms/frame @ 256k agents GPU + wasm-CPU fallback; readback presentation chosen for v1; deployed to docs/) G3. Web page `web/sim.html`: WebGPU, three dispatches per frame
       (update → diffuse → present), trail presented via canvas (fullscreen pass or
       ImageData readback — pick what ships, note the choice), controls (agent count,
       speed/turn/sensor sliders, decay, pause/reset, fps + agents/sec readout), wasm-CPU
@@ -125,3 +125,4 @@ Web page is the primary artifact; everything kernel-side is shared Rust, tested 
 - 2026-06-10 D1–D4: all three drafts written to drafts/ (awaiting-review), Carter notified. Phase D complete. Only RED gates (E) + steady-state (F) remain.
 - 2026-06-10 E1–E3: repo public (botBehavior/rustgpu-bench), Pages live, discussion #614 posted upstream. E4 awaiting Carter. F2 thread-watch now ACTIVE on #614.
 - 2026-06-10 F3+G1: Phase G (Physarum) green-lit and started; kernels + tests + entries committed (c1947e3). #614: 0 replies yet.
+- 2026-06-10 G2+G3: sim verified GPU-vs-CPU (1-agent bit-identical both paths); web sim live at /sim.html — 256k agents @ 12.4 ms/frame headless-verified, wasm fallback works. Only G4 (publish gate, RED) + E4 + F-watches remain.
