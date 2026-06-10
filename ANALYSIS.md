@@ -25,7 +25,18 @@ branch-style checks being slightly costlier than naga's clamp-style checks.
 **Single biggest perf lever found.** Caveat: only meaningful on the native passthrough
 path — see the naga-tax finding below.
 
-### ⚠️ SUPPORTED, NOT ISOLATED (for render): control-flow shape
+### UPDATE 2026-06-10: the tracer gap is DRIVER-SPECIFIC (community cross-check)
+Firestar99 (rust-gpu maintainer) ran this suite on AMD Strix Halo 8060S / RADV (Linux)
+in [discussion #614](https://github.com/Rust-GPU/rust-gpu/discussions/614): render
+rustgpu-spv **1.447 ms** vs hand-WGSL **1.514 ms** — parity. The 1.84× gap below is an
+NVIDIA-driver behavior, not an inherent rust-gpu cost: NVIDIA's compiler digests the
+Phi-heavy flattened form worse than RADV's. The structural analysis below stands as the
+*mechanism*, but its *cost* is driver-dependent. (His run also confirms the naga-arm
+overhead pattern, amplified on RADV: render via naga 4.24 ms vs 1.45 passthrough.)
+Methodology caveat from the same thread, conceded: these are single-dispatch latency
+measurements on an under-utilized GPU; a saturation/throughput variant is queued.
+
+### ⚠️ SUPPORTED, NOT ISOLATED (for render): control-flow shape — on NVIDIA
 The structural difference is stark:
 
 | | rust-gpu `render_cs` | naga compile of hand twin |
