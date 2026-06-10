@@ -1,10 +1,16 @@
 //! Shader benchmark: rust-gpu-emitted SPIR-V vs hand-written WGSL, same
 //! algorithms, same workgroup sizes, same buffers.
 //!
-//! Arms:
-//!   rustgpu-spv   rust-gpu SPIR-V, loaded via PASSTHROUGH_SHADERS (no naga)
-//!   rustgpu-naga  rust-gpu SPIR-V through naga's SPIR-V frontend (the WGSL-path proxy)
-//!   hand-wgsl     hand-written WGSL twins through naga's WGSL frontend
+//! Arms (the naga-tax decomposition — Experiment 1 in EXPERIMENTS.md):
+//!   rustgpu-spv         rust-gpu SPIR-V via PASSTHROUGH_SHADERS (no naga, baseline)
+//!   rustgpu-naga        rust-gpu SPIR-V through naga; wgpu re-injects runtime checks
+//!   rustgpu-naga-unchk  same, but ShaderRuntimeChecks::unchecked() — no injected checks
+//!   hand-wgsl           hand-written WGSL twins through naga's WGSL frontend (checked)
+//!   hand-wgsl-unchk     hand-WGSL, checks off — the floor naga can reach
+//!
+//! Decomposition: (naga vs naga-unchk) isolates the bounds-check tax; (naga-unchk
+//! vs spv) isolates the transpilation/structure tax; (naga-unchk vs hand-wgsl-unchk)
+//! isolates rust-gpu's emitted-code quality from hand-written WGSL, checks held equal.
 //!
 //! Timing: GPU-side timestamp queries around the compute pass only. Uploads,
 //! pipeline creation, and readback are excluded (pipeline creation reported
@@ -67,6 +73,22 @@ fn main() {
             });
             ("rustgpu-naga", m, t.elapsed().as_secs_f64() * 1e3)
         },
+        {
+            // same naga path, but tell wgpu to inject NO runtime checks — the
+            // control that splits the check-tax from the transpilation-tax.
+            // Safe here: every kernel is correctness-gated and has no real OOB.
+            let t = Instant::now();
+            let m = unsafe {
+                ctx.device.create_shader_module_trusted(
+                    wgpu::ShaderModuleDescriptor {
+                        label: Some("rustgpu-naga-unchk"),
+                        source: wgpu::util::make_spirv(&spv),
+                    },
+                    wgpu::ShaderRuntimeChecks::unchecked(),
+                )
+            };
+            ("rustgpu-naga-unchk", m, t.elapsed().as_secs_f64() * 1e3)
+        },
     ];
 
     let wgsl_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../shaders-wgsl");
@@ -74,22 +96,37 @@ fn main() {
 
     for workload in ["collatz", "matmul", "matmul_unchecked", "render", "render_v2"] {
         // hand-WGSL module is per-workload; experiment workloads (B3) have no
-        // hand twin — they compare rust-gpu variants against each other
-        let hand = std::fs::read_to_string(wgsl_dir.join(format!("{workload}.wgsl")))
-            .ok()
-            .map(|src| {
+        // hand twin — they compare rust-gpu variants against each other.
+        // Built both checked and unchecked so the floor naga can reach is visible.
+        let hand_src = std::fs::read_to_string(wgsl_dir.join(format!("{workload}.wgsl"))).ok();
+        let hand: Vec<(&str, wgpu::ShaderModule, f64)> = hand_src
+            .iter()
+            .flat_map(|src| {
                 let t = Instant::now();
-                let m = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                let checked = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("hand-wgsl"),
-                    source: wgpu::ShaderSource::Wgsl(src.into()),
+                    source: wgpu::ShaderSource::Wgsl(src.clone().into()),
                 });
-                (m, t.elapsed().as_secs_f64() * 1e3)
-            });
+                let c_ms = t.elapsed().as_secs_f64() * 1e3;
+                let t = Instant::now();
+                let unchk = unsafe {
+                    ctx.device.create_shader_module_trusted(
+                        wgpu::ShaderModuleDescriptor {
+                            label: Some("hand-wgsl-unchk"),
+                            source: wgpu::ShaderSource::Wgsl(src.clone().into()),
+                        },
+                        wgpu::ShaderRuntimeChecks::unchecked(),
+                    )
+                };
+                let u_ms = t.elapsed().as_secs_f64() * 1e3;
+                [("hand-wgsl", checked, c_ms), ("hand-wgsl-unchk", unchk, u_ms)]
+            })
+            .collect();
 
         for (arm_name, module, module_ms) in arms
             .iter()
             .map(|(n, m, c)| (*n, m, *c))
-            .chain(hand.iter().map(|(m, c)| ("hand-wgsl", m, *c)))
+            .chain(hand.iter().map(|(n, m, c)| (*n, m, *c)))
         {
             let r = run_workload(&ctx, workload, module);
             match r {
