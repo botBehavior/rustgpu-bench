@@ -263,9 +263,9 @@ findings so far: `naga-tax.md`.
 - [x] (2026-06-10: --saturate sweep; at 71ms render/22ms matmul both conclusions HOLD — naga-unchk tracks spv, matmul ties hand-WGSL unchecked at 3 TFLOP/s, tracer keeps 1.86×; naga-tax.md updated) O2. Saturation/throughput sweep (Firestar's core critique): sweep render samples +
       matmul N upward, report throughput (Mraysamples/s, GFLOP/s) at saturation per arm,
       confirm the check-tax ratios hold at full GPU load. Update naga-tax.md.
-- [ ] O3. Structural WGSL diff: naga-emitted WGSL of rust-gpu tracer vs hand tracer —
+- [x] (2026-06-10: naga-WGSL of rust-gpu render = 1 inlined 400-line fn w/ 162 phi-vars + loop/switch state machine vs hand 11 structured fns/0 phi; ANALYSIS.md appendix) O3. Structural WGSL diff: naga-emitted WGSL of rust-gpu tracer vs hand tracer —
       where the 1.85× codegen-shape gap lives (function count, CFG, temps). Append to ANALYSIS.md.
-- [ ] O4. Refresh `drafts/614-reply-1.md`: fold in the unchecked decomposition + the
+- [x] (2026-06-10 drafts/614-reply-1.md rewritten: unchecked decomposition + two-lever recipe + saturation numbers + phi-soup WGSL finding + cross-vendor ask; AI-disclosed) O4. Refresh `drafts/614-reply-1.md`: fold in the unchecked decomposition + the
       two-lever recipe (answers nazar-pc) + throughput numbers + render_v2 parity. [YELLOW draft]
 - [ ] O5. [RED] Post the #614 follow-up (Carter pastes or grants permission).
 
