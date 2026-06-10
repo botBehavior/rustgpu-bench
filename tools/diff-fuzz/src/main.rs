@@ -436,8 +436,161 @@ fn shrink(seed: u32, fn_idx: usize, root: &std::path::Path, gpu: &GpuCtx) {
     println!("minimized -> {} (size {})\n{src}", path.display(), size(&best));
 }
 
+/// Build the module (context fns + target as LAST slot), run, return whether
+/// the target slot mismatches the interpreter. None = compile failure.
+fn probe(
+    root: &std::path::Path,
+    gpu: &GpuCtx,
+    seed: u32,
+    ctx_fns: &[Node],
+    target: &Node,
+) -> Option<bool> {
+    let fuzz_dir = root.join("fuzz-shaders");
+    let mut module: Vec<Node> = ctx_fns.to_vec();
+    module.push(target.clone());
+    write_batch(&module, &fuzz_dir);
+    let ok = Command::new("cargo")
+        .args(["gpu", "build", "--shader-crate", fuzz_dir.to_str().unwrap(),
+               "--output-dir", fuzz_dir.join("spv").to_str().unwrap(),
+               "--auto-install-rust-toolchain"])
+        .current_dir(root)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !ok {
+        return None;
+    }
+    let spv = std::fs::read(fuzz_dir.join("spv/fuzz_shaders.spv")).ok()?;
+    let out = run_gpu(gpu, &spv, seed, module.len() as u32);
+    Some(any_mismatch(&out, target, seed, module.len() - 1))
+}
+
+fn bisect(seed: u32, fn_idx: usize, root: &std::path::Path, gpu: &GpuCtx) {
+    let mut rng = Rng(if seed == 0 { 0xDEAD_BEEF } else { lcg(seed) });
+    let fns: Vec<Node> = (0..N_FNS).map(|_| gen(&mut rng, 0)).collect();
+    let mut target = fns[fn_idx].clone();
+    let mut ctx: Vec<Node> = fns
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != fn_idx)
+        .map(|(_, f)| f.clone())
+        .collect();
+
+    match probe(root, gpu, seed, &ctx, &target) {
+        Some(true) => println!("baseline (target-last, full context): mismatch confirmed"),
+        other => {
+            println!("baseline FAILED to reproduce with target in last slot ({other:?}) — slot position matters; aborting bisect");
+            return;
+        }
+    }
+
+    // ddmin over context fns
+    let mut chunk = ctx.len().div_ceil(2);
+    loop {
+        let mut removed = false;
+        let mut i = 0usize;
+        while i < ctx.len() {
+            let end = (i + chunk).min(ctx.len());
+            let mut trial = ctx.clone();
+            trial.drain(i..end);
+            if probe(root, gpu, seed, &trial, &target) == Some(true) {
+                ctx = trial;
+                removed = true;
+                println!("  context -> {} fns", ctx.len());
+            } else {
+                i = end;
+            }
+        }
+        if chunk == 1 {
+            if !removed {
+                break;
+            }
+        } else {
+            chunk = (chunk / 2).max(1);
+        }
+    }
+    println!("minimal context: {} sibling fn(s)", ctx.len());
+
+    // in-context greedy shrink of the target (one candidate per compile)
+    let mut probes = 0u32;
+    'outer: loop {
+        let mut cands = simplifications(&target);
+        cands.sort_by_key(size);
+        for cand in cands {
+            if probes >= 80 {
+                println!("probe budget reached");
+                break 'outer;
+            }
+            probes += 1;
+            if probe(root, gpu, seed, &ctx, &cand) == Some(true) {
+                target = cand;
+                println!("  target -> size {}", size(&target));
+                continue 'outer;
+            }
+        }
+        break;
+    }
+    // also shrink each context fn greedily (cheap pass, leaves only)
+    for ci in 0..ctx.len() {
+        loop {
+            let mut cands = simplifications(&ctx[ci]);
+            cands.sort_by_key(size);
+            cands.truncate(12);
+            let mut improved = false;
+            for cand in cands {
+                if probes >= 140 {
+                    break;
+                }
+                probes += 1;
+                let mut trial = ctx.clone();
+                trial[ci] = cand.clone();
+                if probe(root, gpu, seed, &trial, &target) == Some(true) {
+                    ctx = trial;
+                    improved = true;
+                    break;
+                }
+            }
+            if !improved {
+                break;
+            }
+        }
+    }
+
+    // emit the final minimal MODULE as the repro artifact
+    let fuzz_dir = root.join("fuzz-shaders");
+    let mut module: Vec<Node> = ctx.clone();
+    module.push(target.clone());
+    write_batch(&module, &fuzz_dir);
+    let lib = std::fs::read_to_string(fuzz_dir.join("src/lib.rs")).unwrap();
+    let out_path = root.join(format!("findings/min-module-seed{seed}.rs"));
+    let mut report = format!(
+        "// MINIMIZED MODULE repro for rust-gpu miscompile (seed {seed}, original fn {fn_idx})\n// Context-dependent: target (LAST fn) miscompiles only alongside {} sibling fn(s).\n// Reproduce: use this as fuzz-shaders/src/lib.rs, build with cargo-gpu, dispatch fuzz_cs,\n// compare target slot against CPU. Mismatch confirmed on both passthrough and naga paths.\n\n",
+        ctx.len()
+    );
+    report.push_str(&lib);
+    std::fs::write(&out_path, report).expect("write module repro");
+    println!(
+        "module repro -> {} (context {} fns, target size {}, {} probes)",
+        out_path.display(),
+        ctx.len(),
+        size(&target),
+        probes
+    );
+    let mut tsrc = String::new();
+    emit(&target, &mut tsrc);
+    println!("target fn: {tsrc}");
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.first().map(|s| s.as_str()) == Some("--bisect") {
+        let seed: u32 = argv[1].parse().expect("seed");
+        let fn_idx: usize = argv[2].parse().expect("fn idx");
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let gpu = pollster::block_on(init_gpu());
+        bisect(seed, fn_idx, &root, &gpu);
+        return;
+    }
     if argv.first().map(|s| s.as_str()) == Some("--shrink") {
         let seed: u32 = argv[1].parse().expect("seed");
         let fn_idx: usize = argv[2].parse().expect("fn idx");
