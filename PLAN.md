@@ -202,10 +202,17 @@ and look are Rust source.
       modified-stamp and hot-swaps pipelines WITHOUT stopping the audio ring.
       Measure and report edit→sound latency. Local-dev experience; documented in
       README with a recorded demo as a future E-gate asset.
-- [ ] L5. Deploy static synth to docs/ (cross-links); announcing = RED.
+- [ ] L5. Deploy static synth to oscilla's own Pages site (cross-link from
+      rustgpu-bench pages); announcing = RED.
+- [ ] L6. BOLD scope (Carter: "make it a bold project") — after L1-L5 land, in order:
+      polyphony (8+ voices, voice stealing); WebMIDI input (play it with real keys);
+      patch presets + shareable patch URLs (state in the fragment); record-to-WAV
+      export; spectrum + oscilloscope visual modes built from the audio block (the
+      "oscilla" namesake). Each lands as its own verified increment, same discipline.
 
 ## Approvals (Carter writes lines here, e.g. `approved: E1 name=rustgpu-bench 2026-06-11`)
 
+- approved: L0 name=oscilla (Carter in chat 2026-06-10: "oscilla is a bold name, let's make it a bold project") — repo botBehavior/oscilla, create public when Phase K is complete
 - approved: E1 name=rustgpu-bench (Carter in chat, 2026-06-10)
 - approved: E2 (Carter in chat, 2026-06-10)
 - approved: E3 (Carter in chat, 2026-06-10)
