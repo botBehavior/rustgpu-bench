@@ -94,3 +94,28 @@ cargo run -p spirv-stats --release -- shaders/spv/gpu_shaders.spv render_cs
 cargo run -p spirv-stats --release -- hand-render.spv
 cargo run -p bench --release   # includes matmul_unchecked + render_v2 experiments
 ```
+
+## Appendix (O3, 2026-06-10): the tracer gap at the WGSL level
+
+Earlier we diffed at the SPIR-V level. This is the view the *browser* actually compiles —
+`naga shaders/spv/gpu_shaders.spv out.wgsl`, the rust-gpu render path (`function_8`) vs the
+hand `render.wgsl`:
+
+| metric | rust-gpu render (naga-emitted) | hand render.wgsl |
+|---|---|---|
+| structure | **1 fully-inlined function**, 400 lines | **11 structured functions**, 189 lines |
+| `loop {}` / `switch` | 3 / 2 (CFG reconstructed as a state machine) | 0 / 1 |
+| `if` | 22 | 10 |
+| `var` (mutable) | **60**, of which **162 phi-materialized** assignments | 14 |
+| `for` | 0 (control flow is `loop`+`break`+`switch`) | 3 |
+
+The flattened SPIR-V (one 74-block / 40-OpPhi function — logical addressing forbids passing
+pointers, so rust-gpu inlines everything) survives transpilation as a single 400-line WGSL
+function whose 40 OpPhis become **162 mutable phi-vars** threaded through a reconstructed
+`loop { switch }` state machine. The hand version is 11 small functions with natural control
+flow and zero phi materialization. This is the concrete form of the 1.86× gap: NVIDIA's
+register allocator / optimizer handles the structured form far better than the phi-soup
+state machine. It is **codegen shape, not bounds checks** (checks-off moves it <1%, per
+`naga-tax.md`) and it is **driver-specific** (RADV reaches parity — it digests the inlined
+form fine; NVIDIA does not). The fix lives upstream in rust-gpu's function-call story
+(qptr / physical pointers would let it stop inlining), not in our kernel.
