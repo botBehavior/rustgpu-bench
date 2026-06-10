@@ -16,6 +16,13 @@ use std::time::Instant;
 const N_FNS: u32 = 48;
 const N_INPUTS: u32 = 4096;
 const MAX_DEPTH: u32 = 5;
+/// Calls may only target the first CALL_TARGETS functions, which are themselves
+/// call-free (their index < CALL_TARGETS). This keeps inlining depth at 1:
+/// rust-gpu's logical-pointer legalizer must inline every call, so unrestricted
+/// call chains explode combinatorially and hang the compiler (observed: a 48-fn
+/// dense-call batch killed rustc). Leaf-only callees exercise cross-function
+/// call lowering + argument passing while staying polynomial.
+const CALL_TARGETS: u32 = 4;
 
 // ---------- deterministic rng ----------
 struct Rng(u32);
@@ -55,9 +62,15 @@ enum Node {
     Rem(Box<Node>, Box<Node>),  // rhs | 1
     Sel(Box<Node>, Box<Node>, Box<Node>, Box<Node>), // if a < b { t } else { f }
     Loop(Box<Node>, Box<Node>, u32), // acc=e0; k times: acc = acc*M + e1
+    /// Call f_j(arg0, arg1) for an EARLIER function j < this fn's index. The
+    /// strict ordering keeps the call graph acyclic (SPIR-V forbids recursion)
+    /// and exercises rust-gpu's cross-function inlining / pointer legalization.
+    Call(u32, Box<Node>, Box<Node>),
 }
 
-fn gen(rng: &mut Rng, depth: u32) -> Node {
+/// `my_idx` = the index of the function currently being generated; calls may
+/// only target earlier functions, so generation needs to know it.
+fn gen(rng: &mut Rng, depth: u32, my_idx: u32) -> Node {
     use Node::*;
     if depth >= MAX_DEPTH || rng.below(100) < 18 {
         return match rng.below(3) {
@@ -68,10 +81,10 @@ fn gen(rng: &mut Rng, depth: u32) -> Node {
     }
     macro_rules! a {
         () => {
-            Box::new(gen(rng, depth + 1))
+            Box::new(gen(rng, depth + 1, my_idx))
         };
     }
-    let op = rng.below(14);
+    let op = rng.below(16);
     match op {
         0 => Add(a!(), a!()),
         1 => Sub(a!(), a!()),
@@ -88,6 +101,7 @@ fn gen(rng: &mut Rng, depth: u32) -> Node {
             let k = 1 + rng.below(8);
             Loop(a!(), a!(), k)
         }
+        13 | 14 if my_idx >= CALL_TARGETS => Call(rng.below(CALL_TARGETS), a!(), a!()),
         _ => Sel(a!(), a!(), a!(), a!()),
     }
 }
@@ -152,6 +166,13 @@ fn emit(n: &Node, out: &mut String) {
             emit(e1, out);
             out.push_str("); i += 1; } acc })");
         }
+        Call(j, a, b) => {
+            let _ = write!(out, "f_{j}(");
+            emit(a, out);
+            out.push_str(", ");
+            emit(b, out);
+            out.push(')');
+        }
     }
 }
 
@@ -170,38 +191,59 @@ fn infix(out: &mut String, a: &Node, op: &str, b: &Node) {
     out.push(')');
 }
 
-fn interp(n: &Node, x: u32, y: u32) -> u32 {
+/// `fns` is the whole module, so a Call can resolve its callee's body. Callees
+/// are always earlier indices, so this terminates.
+fn interp(n: &Node, x: u32, y: u32, fns: &[Node]) -> u32 {
     use Node::*;
+    let e = |m: &Node| interp(m, x, y, fns);
     match n {
         X => x,
         Y => y,
         C(v) => *v,
-        Add(a, b) => interp(a, x, y).wrapping_add(interp(b, x, y)),
-        Sub(a, b) => interp(a, x, y).wrapping_sub(interp(b, x, y)),
-        Mul(a, b) => interp(a, x, y).wrapping_mul(interp(b, x, y)),
-        And(a, b) => interp(a, x, y) & interp(b, x, y),
-        Or(a, b) => interp(a, x, y) | interp(b, x, y),
-        Xor(a, b) => interp(a, x, y) ^ interp(b, x, y),
-        Shl(a, b) => interp(a, x, y) << (interp(b, x, y) & 31),
-        Shr(a, b) => interp(a, x, y) >> (interp(b, x, y) & 31),
-        Div(a, b) => interp(a, x, y) / (interp(b, x, y) | 1),
-        Rem(a, b) => interp(a, x, y) % (interp(b, x, y) | 1),
+        Add(a, b) => e(a).wrapping_add(e(b)),
+        Sub(a, b) => e(a).wrapping_sub(e(b)),
+        Mul(a, b) => e(a).wrapping_mul(e(b)),
+        And(a, b) => e(a) & e(b),
+        Or(a, b) => e(a) | e(b),
+        Xor(a, b) => e(a) ^ e(b),
+        Shl(a, b) => e(a) << (e(b) & 31),
+        Shr(a, b) => e(a) >> (e(b) & 31),
+        Div(a, b) => e(a) / (e(b) | 1),
+        Rem(a, b) => e(a) % (e(b) | 1),
         Sel(a, b, t, f) => {
-            if interp(a, x, y) < interp(b, x, y) {
-                interp(t, x, y)
+            if e(a) < e(b) {
+                e(t)
             } else {
-                interp(f, x, y)
+                e(f)
             }
         }
         Loop(e0, e1, k) => {
-            let mut acc = interp(e0, x, y);
-            let e1v = interp(e1, x, y);
+            let mut acc = e(e0);
+            let e1v = e(e1);
             let mut i = 0u32;
             while i < *k {
                 acc = acc.wrapping_mul(1664525).wrapping_add(e1v);
                 i += 1;
             }
             acc
+        }
+        Call(j, a, b) => {
+            let (a0, a1) = (e(a), e(b));
+            // callee body evaluated with arg0->x, arg1->y (matches f_j(arg0,arg1))
+            interp(&fns[*j as usize], a0, a1, fns)
+        }
+    }
+}
+
+fn contains_call(n: &Node) -> bool {
+    use Node::*;
+    match n {
+        X | Y | C(_) => false,
+        Call(..) => true,
+        Add(a, b) | Sub(a, b) | Mul(a, b) | And(a, b) | Or(a, b) | Xor(a, b) | Shl(a, b)
+        | Shr(a, b) | Div(a, b) | Rem(a, b) | Loop(a, b, _) => contains_call(a) || contains_call(b),
+        Sel(a, b, t, f) => {
+            contains_call(a) || contains_call(b) || contains_call(t) || contains_call(f)
         }
     }
 }
@@ -228,6 +270,34 @@ fn write_batch(fns: &[Node], dir: &std::path::Path) {
     std::fs::write(dir.join("src/lib.rs"), src).expect("write generated lib.rs");
 }
 
+/// A standalone, natively-compilable repro. Call-free fns emit as a single
+/// `repro`; call-containing fns emit every function they can reach (indices
+/// 0..=idx, since calls only target earlier functions) so the file compiles.
+fn repro_source(fns: &[Node], idx: usize, x: u32, y: u32, cpu: u32, got: u32, seed: u32) -> String {
+    let mut s = format!(
+        "// MISMATCH seed={seed} fn={idx} x={x} y={y}\n// cpu(interp)={cpu} gpu={got}\n// Valid Rust — native rustc is the arbiter and must agree with the interpreter.\n"
+    );
+    if contains_call(&fns[idx]) {
+        for (j, f) in fns.iter().enumerate().take(idx + 1) {
+            let mut b = String::new();
+            emit(f, &mut b);
+            let _ = write!(s, "pub fn f_{j}(x: u32, y: u32) -> u32 {{ {b} }}\n");
+        }
+        let _ = write!(
+            s,
+            "fn main() {{ assert_eq!(f_{idx}({x}, {y}), {cpu}u32, \"native rustc disagrees with interpreter\"); }}\n"
+        );
+    } else {
+        let mut b = String::new();
+        emit(&fns[idx], &mut b);
+        let _ = write!(
+            s,
+            "pub fn repro(x: u32, y: u32) -> u32 {{ {b} }}\nfn main() {{ assert_eq!(repro({x}, {y}), {cpu}u32, \"native rustc disagrees with interpreter\"); }}\n"
+        );
+    }
+    s
+}
+
 // ---------- shrinker ----------
 
 fn size(n: &Node) -> u32 {
@@ -237,7 +307,7 @@ fn size(n: &Node) -> u32 {
         Add(a, b) | Sub(a, b) | Mul(a, b) | And(a, b) | Or(a, b) | Xor(a, b) | Shl(a, b)
         | Shr(a, b) | Div(a, b) | Rem(a, b) => 1 + size(a) + size(b),
         Sel(a, b, t, f) => 1 + size(a) + size(b) + size(t) + size(f),
-        Loop(a, b, _) => 1 + size(a) + size(b),
+        Loop(a, b, _) | Call(_, a, b) => 1 + size(a) + size(b),
     }
 }
 
@@ -260,7 +330,8 @@ fn simplifications(n: &Node) -> Vec<Node> {
             match n {
                 X | Y | C(_) => {}
                 Add(a, b) | Sub(a, b) | Mul(a, b) | And(a, b) | Or(a, b) | Xor(a, b)
-                | Shl(a, b) | Shr(a, b) | Div(a, b) | Rem(a, b) | Loop(a, b, _) => {
+                | Shl(a, b) | Shr(a, b) | Div(a, b) | Rem(a, b) | Loop(a, b, _)
+                | Call(_, a, b) => {
                     walk(a, idx, target, out);
                     walk(b, idx, target, out);
                 }
@@ -300,6 +371,7 @@ fn simplifications(n: &Node) -> Vec<Node> {
                 Rem(a, b) => Rem(r!(a), r!(b)),
                 Sel(a, b, t, f) => Sel(r!(a), r!(b), r!(t), r!(f)),
                 Loop(a, b, k) => Loop(r!(a), r!(b), *k),
+                Call(j, a, b) => Call(*j, r!(a), r!(b)),
             }
         }
         let total = subtree_count(root);
@@ -329,7 +401,8 @@ fn simplifications(n: &Node) -> Vec<Node> {
             let mut v = vec![X, Y, C(0)];
             match sub {
                 Add(a, b) | Sub(a, b) | Mul(a, b) | And(a, b) | Or(a, b) | Xor(a, b)
-                | Shl(a, b) | Shr(a, b) | Div(a, b) | Rem(a, b) | Loop(a, b, _) => {
+                | Shl(a, b) | Shr(a, b) | Div(a, b) | Rem(a, b) | Loop(a, b, _)
+                | Call(_, a, b) => {
                     v.push((**a).clone());
                     v.push((**b).clone());
                 }
@@ -349,11 +422,11 @@ fn simplifications(n: &Node) -> Vec<Node> {
     out
 }
 
-fn any_mismatch(gpu_out: &[u32], f: &Node, seed: u32, slot: usize) -> bool {
+fn any_mismatch(gpu_out: &[u32], f: &Node, seed: u32, slot: usize, fns: &[Node]) -> bool {
     for ii in 0..N_INPUTS {
         let x = lcg(seed ^ ii);
         let y = lcg(x);
-        if interp(f, x, y) != gpu_out[slot * N_INPUTS as usize + ii as usize] {
+        if interp(f, x, y, fns) != gpu_out[slot * N_INPUTS as usize + ii as usize] {
             return true;
         }
     }
@@ -364,8 +437,12 @@ fn shrink(seed: u32, fn_idx: usize, root: &std::path::Path, gpu: &GpuCtx) {
     let fuzz_dir = root.join("fuzz-shaders");
     let spv_path = fuzz_dir.join("spv/fuzz_shaders.spv");
     let mut rng = Rng(if seed == 0 { 0xDEAD_BEEF } else { lcg(seed) });
-    let fns: Vec<Node> = (0..N_FNS).map(|_| gen(&mut rng, 0)).collect();
+    let fns: Vec<Node> = (0..N_FNS).map(|i| gen(&mut rng, 0, i)).collect();
     let mut best = fns[fn_idx].clone();
+    if contains_call(&best) {
+        println!("fn {fn_idx} contains calls — per-fn shrink batches candidates into one module, which breaks position-bound call indices. Use the campaign's 0..=idx prefix repro (already valid Rust), or --bisect.");
+        return;
+    }
     println!("shrinking seed {seed} fn {fn_idx}: start size {}", size(&best));
 
     loop {
@@ -389,7 +466,8 @@ fn shrink(seed: u32, fn_idx: usize, root: &std::path::Path, gpu: &GpuCtx) {
             let spv = std::fs::read(&spv_path).expect("spv");
             let out = run_gpu(gpu, &spv, seed, chunk.len() as u32);
             for (slot, cand) in chunk.iter().enumerate() {
-                if any_mismatch(&out, cand, seed, slot) {
+                // shrink only runs on call-free fns, so chunk is a valid fns table
+                if any_mismatch(&out, cand, seed, slot, chunk) {
                     best = cand.clone();
                     improved = true;
                     println!("  -> size {}", size(&best));
@@ -422,7 +500,7 @@ fn shrink(seed: u32, fn_idx: usize, root: &std::path::Path, gpu: &GpuCtx) {
     for ii in 0..N_INPUTS {
         let x = lcg(seed ^ ii);
         let y = lcg(x);
-        let cpu = interp(&best, x, y);
+        let cpu = interp(&best, x, y, std::slice::from_ref(&best));
         if cpu != out[ii as usize] {
             example = (x, y, cpu, out[ii as usize]);
             break;
@@ -462,13 +540,17 @@ fn probe(
     }
     let spv = std::fs::read(fuzz_dir.join("spv/fuzz_shaders.spv")).ok()?;
     let out = run_gpu(gpu, &spv, seed, module.len() as u32);
-    Some(any_mismatch(&out, target, seed, module.len() - 1))
+    Some(any_mismatch(&out, target, seed, module.len() - 1, &module))
 }
 
 fn bisect(seed: u32, fn_idx: usize, root: &std::path::Path, gpu: &GpuCtx) {
     let mut rng = Rng(if seed == 0 { 0xDEAD_BEEF } else { lcg(seed) });
-    let fns: Vec<Node> = (0..N_FNS).map(|_| gen(&mut rng, 0)).collect();
+    let fns: Vec<Node> = (0..N_FNS).map(|i| gen(&mut rng, 0, i)).collect();
     let mut target = fns[fn_idx].clone();
+    if contains_call(&target) {
+        println!("fn {fn_idx} contains calls — ddmin reorders functions, scrambling position-bound call indices. The campaign already emits a valid 0..=idx prefix repro for call-containing findings; minimizing those needs call-index remapping (future work).");
+        return;
+    }
     let mut ctx: Vec<Node> = fns
         .iter()
         .enumerate()
@@ -618,7 +700,7 @@ fn main() {
     for batch in 0..batches {
         let seed = seed0.wrapping_add(batch);
         let mut rng = Rng(if seed == 0 { 0xDEAD_BEEF } else { lcg(seed) });
-        let fns: Vec<Node> = (0..N_FNS).map(|_| gen(&mut rng, 0)).collect();
+        let fns: Vec<Node> = (0..N_FNS).map(|i| gen(&mut rng, 0, i)).collect();
         write_batch(&fns, &fuzz_dir);
 
         let status = Command::new("cargo")
@@ -657,22 +739,15 @@ fn main() {
             for ii in 0..N_INPUTS {
                 let x = lcg(seed ^ ii);
                 let y = lcg(x);
-                let cpu = interp(f, x, y);
+                let cpu = interp(f, x, y, &fns);
                 let got = gpu_out[fi * N_INPUTS as usize + ii as usize];
                 total_cmp += 1;
                 if cpu != got {
                     findings += 1;
-                    let mut src = String::new();
-                    emit(f, &mut src);
+                    let kind = if contains_call(f) { "call" } else { "flat" };
                     let path = findings_dir.join(format!("mismatch-seed{seed}-fn{fi}.rs"));
-                    std::fs::write(
-                        &path,
-                        format!(
-                            "// MISMATCH seed={seed} fn={fi} x={x} y={y}\n// cpu(interp)={cpu} gpu={got}\n// verify natively: this file is valid Rust\npub fn repro(x: u32, y: u32) -> u32 {{ {src} }}\nfn main() {{ assert_eq!(repro({x}, {y}), {cpu}u32, \"native rustc disagrees with interpreter\"); }}\n"
-                        ),
-                    )
-                    .ok();
-                    println!("batch seed {seed} fn {fi}: MISMATCH at x={x} y={y} (cpu {cpu} vs gpu {got}) -> {}", path.display());
+                    std::fs::write(&path, repro_source(&fns, fi, x, y, cpu, got, seed)).ok();
+                    println!("batch seed {seed} fn {fi}: MISMATCH ({kind}) at x={x} y={y} (cpu {cpu} vs gpu {got}) -> {}", path.display());
                     break; // one repro per fn is enough
                 }
             }
