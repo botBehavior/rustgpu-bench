@@ -5,6 +5,9 @@
 The same function, byte-for-byte the same source, renders it on your CPU, in WASM, and on
 WebGPU in a browser.*
 
+**Live demo: https://botbehavior.github.io/rustgpu-bench/** · Upstream discussion:
+[Rust-GPU/rust-gpu#614](https://github.com/Rust-GPU/rust-gpu/discussions/614)
+
 A path tracer written once, in ordinary Rust, running verified on:
 
 | target | how | time (800×450, same scene) |

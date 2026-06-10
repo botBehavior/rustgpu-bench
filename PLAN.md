@@ -66,11 +66,9 @@ completed item with trailer `Co-Authored-By: Ferra <Ferra@Fable5>`. Rules of con
 
 ## Phase E — RED gates (each needs an Approvals line below)
 
-- [ ] E1. Create public repo `botBehavior/<name>` (Carter picks name at approval;
-      suggestions: `rust-gpu-four-targets`, `one-fn-four-targets`, `rustgpu-bench`),
-      push, verify it renders correctly on github.com. [RED]
-- [ ] E2. GitHub Pages for the web demo from the public repo; verify live URL. [RED]
-- [ ] E3. File the upstream issue/discussion from D1 (with live links). [RED]
+- [x] (2026-06-10 approved+done: github.com/botBehavior/rustgpu-bench public, main+tags pushed, drafts/ confirmed excluded) E1. Create public repo. [RED]
+- [x] (2026-06-10 approved+done: botbehavior.github.io/rustgpu-bench live-verified, demo served from /docs) E2. GitHub Pages for the web demo from the public repo; verify live URL. [RED]
+- [x] (2026-06-10 approved+done: posted to Show-and-tell as Rust-GPU/rust-gpu#614 after checking for duplicates (#315, #63 referenced) and AI policy (none); disclosure included) E3. File the upstream issue/discussion from D1 (with live links). [RED]
 - [ ] E4. Publish the post (venue per Carter at approval). [RED]
 
 ## Phase F — steady state (GREEN, after E-phase items land)
@@ -97,3 +95,4 @@ completed item with trailer `Co-Authored-By: Ferra <Ferra@Fable5>`. Rules of con
 - 2026-06-10 B1–B5: spirv-stats tool; gap root-caused — matmul = bounds checks (unchecked: 2.5× faster, beats hand-WGSL 2.1×), tracer = codegen shape (40-Phi mega-fn vs 11 structured fns; libm + bloat hypotheses refuted), naga arm tax = wgpu re-injected checks, qptr = correct but perf-neutral. ANALYSIS.md written. Phase B complete.
 - 2026-06-10 C1–C3: cold-repro PASSED end-to-end, browser steady-state 3.6 ms (~260× vs wasm), hero image. Phase C complete.
 - 2026-06-10 D1–D4: all three drafts written to drafts/ (awaiting-review), Carter notified. Phase D complete. Only RED gates (E) + steady-state (F) remain.
+- 2026-06-10 E1–E3: repo public (botBehavior/rustgpu-bench), Pages live, discussion #614 posted upstream. E4 awaiting Carter. F2 thread-watch now ACTIVE on #614.
