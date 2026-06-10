@@ -197,7 +197,7 @@ and look are Rust source.
       (the honest metric: GPU audio is about meeting realtime, report it truthfully).
       Headless verify: block waveform statistical-gate vs CPU + visual pixel sanity
       (audio output itself can't be heard headless — note that honestly).
-- [ ] L4. Live-coding mode (the #4 half): `tools/live.ps1` — watch `shaderlib/src/`,
+- [x] (2026-06-10 oscilla 9b47277: watcher + in-flight hot-swap, 370ms stamp-to-swap measured headless, ~2.4s warm edit-to-sound, failed builds leave old shader live) L4. Live-coding mode (the #4 half): `tools/live.ps1` — watch `shaderlib/src/`,
       on change: cargo-gpu build → naga → kernels.wgsl; page polls the file's
       modified-stamp and hot-swaps pipelines WITHOUT stopping the audio ring.
       Measure and report edit→sound latency. Local-dev experience; documented in
