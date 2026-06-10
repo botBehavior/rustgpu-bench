@@ -85,9 +85,17 @@ cell: forage (income + deplete). Branch stochastically when resource-rich. Anast
       thick biomass ahead), radial spore inoculation, tested `shade()` (foxfire glow). 6 CPU
       tests green. GPU entries `mycelium_spawn/grow/render_cs` compile to SPIR-V (Step struct
       lowers fine). Branch-append (atomic) deferred to T4 per note.
-- [ ] **T2 — The transport solver.** Add `resource` + `flux`; the biomass-weighted relaxation
-      iteration; tip growth becomes resource-limited (consume R, forage income). CPU tests:
-      one iteration conserves R (no source/sink), resource flows source→sink along biomass.
+- [x] **T2 — The transport solver.** `resource` + `flux` fields; saturating biomass
+      conductivity `k = m/(m+k_half)` (`m = min(B_i,B_j)`) that keeps the Jacobi relaxation
+      stable (α ≤ ¼) and mass-conserving however thick cords grow; `transport_at` (per-cell,
+      toroidal, returns new R + |throughput|). Growth is now **resource-limited**: tips forage
+      nutrient→sugar at `home`, pay `growth_cost` to advance, and **stall** (hold position,
+      keep foraging) when the network can't supply them. 6 new CPU tests — R conservation +
+      maximum principle, flow-along-cord-not-through-gaps, frozen-without-biomass,
+      flux-tracks-gradient, resource-gated growth, forage-funded growth — 12/12 green.
+      `mycelium_transport_cs` + the updated `mycelium_grow_cs` compile to SPIR-V **and
+      transpile through naga to WGSL** (web path verified, "double-check trap" cleared).
+      2026-06-10.
 - [ ] **T3 — Adaptive feedback + the shortest-path proof.** The `B += adapt·F − atrophy·B`
       rule; cords form, dead ends prune. Ship the two-route shortest-path integration test
       (the citable result). Tune stability (α, K, rates) on CPU.

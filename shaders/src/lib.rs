@@ -177,6 +177,7 @@ pub fn mycelium_grow_cs(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] tips: &mut [MycTip],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] nutrient: &mut [f32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] biomass: &mut [f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] resource: &mut [f32],
 ) {
     let i = id.x;
     if i >= params.n_tips {
@@ -186,12 +187,42 @@ pub fn mycelium_grow_cs(
     if tip.alive == 0.0 {
         return;
     }
-    let step = gpu_shared::mycelium::grow_tip(&tip, nutrient, biomass, params, i);
+    let step = gpu_shared::mycelium::grow_tip(&tip, nutrient, biomass, resource, params, i);
     tips[i as usize] = step.tip;
-    biomass[step.cell as usize] += params.deposit; // non-atomic deposit
-    let n = nutrient[step.cell as usize] - params.forage_rate;
-    nutrient[step.cell as usize] = if n > 0.0 { n } else { 0.0 };
+
+    // resource economy at home (non-atomic; T4 swaps these for atomics). The
+    // growth gate guarantees resource stays >= 0 even when resource_delta < 0.
+    let nu = nutrient[step.home as usize] - step.forage;
+    nutrient[step.home as usize] = if nu > 0.0 { nu } else { 0.0 };
+    resource[step.home as usize] += step.resource_delta;
+
+    if step.advanced == 1 {
+        biomass[step.cell as usize] += params.deposit; // lay new hypha (non-atomic)
+    }
     // branch append (atomic counter) is wired in T4
+}
+
+/// One Jacobi relaxation of the resource-transport solver (T2). One thread per
+/// cell; ping-pong `resource_in -> resource_out`. `flux` accumulates throughput
+/// across the K iterations a frame runs (caller zeroes it before the K loop).
+#[spirv(compute(threads(8, 8)))]
+pub fn mycelium_transport_cs(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &MycParams,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] biomass: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] resource_in: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] resource_out: &mut [f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] flux: &mut [f32],
+) {
+    let x = id.x;
+    let y = id.y;
+    if x >= params.width || y >= params.height {
+        return;
+    }
+    let i = (y * params.width + x) as usize;
+    let f = gpu_shared::mycelium::transport_at(x, y, resource_in, biomass, params);
+    resource_out[i] = f.resource;
+    flux[i] += f.flux;
 }
 
 #[spirv(compute(threads(8, 8)))]
