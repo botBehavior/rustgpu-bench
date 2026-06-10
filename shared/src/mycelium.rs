@@ -73,6 +73,10 @@ pub struct Params {
     pub forage_income: f32,      // resource produced per unit nutrient foraged
     pub adapt_rate: f32,         // biomass gained per unit flux (cord reinforcement)
     pub atrophy: f32,            // biomass decayed per step (prunes unused hyphae)
+    pub mouse_x: f32,            // interactive nutrient drop (GPU layer): disk centre x
+    pub mouse_y: f32,            // disk centre y
+    pub mouse_r: f32,            // disk radius (<= 0 => no drop this frame)
+    pub mouse_food: f32,         // nutrient added at the disk centre
     pub exposure: f32,           // render gain
     pub seed_tips: u32,          // initial live tips (germinating spore)
 }
@@ -100,6 +104,10 @@ impl Params {
             forage_income: 1.0,
             adapt_rate: 0.08,
             atrophy: 0.03,
+            mouse_x: -1.0,
+            mouse_y: -1.0,
+            mouse_r: 0.0,
+            mouse_food: 0.0,
             exposure: 1.0,
             seed_tips: 12,
         }
@@ -146,6 +154,29 @@ pub fn spawn_tip(i: u32, seed: u32, p: &Params) -> Tip {
         x: p.width as f32 * 0.5,
         y: p.height as f32 * 0.5,
         heading: h,
+        colony: 0.0,
+        alive: 1.0,
+        age: 0.0,
+    }
+}
+
+/// Inoculate tip `i` at a random position with a random heading — a colonised
+/// substrate, vs `spawn_tip`'s single central spore. First `seed_tips` alive.
+/// Deterministic from `i` so CPU and GPU agree. Used by the interactive page,
+/// where dense scatter gives a living network without dynamic branching (which
+/// MYCELIA.md assigns to T6's atomic spawn).
+pub fn spawn_scatter(i: u32, p: &Params) -> Tip {
+    if i >= p.seed_tips {
+        return Tip::DEAD;
+    }
+    let mut s = rng::seed(i, 0xA1, 0x5EED);
+    let x = rng::next_f32(&mut s) * p.width as f32;
+    let y = rng::next_f32(&mut s) * p.height as f32;
+    let heading = rng::next_f32(&mut s) * TAU;
+    Tip {
+        x,
+        y,
+        heading,
         colony: 0.0,
         alive: 1.0,
         age: 0.0,
@@ -333,15 +364,22 @@ pub fn adapt_at(biomass: f32, flux: f32, p: &Params) -> f32 {
     }
 }
 
-/// Render math (tested Rust): biomass -> bioluminescent foxfire glow, remaining
-/// nutrient -> faint warm substrate. Dark where neither.
-pub fn shade(biomass: f32, nutrient: f32, exposure: f32) -> glam::Vec3 {
+/// Render math (tested Rust): biomass -> bioluminescent foxfire glow, sugar
+/// flowing through the cords (`resource`) -> a brighter, cooler shimmer gated by
+/// biomass, remaining nutrient -> faint warm substrate. Dark where nothing lives.
+pub fn shade(biomass: f32, nutrient: f32, resource: f32, exposure: f32) -> glam::Vec3 {
     use glam::vec3;
-    let sub = vec3(0.05, 0.035, 0.02) * (1.0 - (-(nutrient * 2.0).max(0.0)).exp());
+    // substrate stays nearly black so the living network reads on darkness — only
+    // rich food hints a faint warmth, ambient barely registers
+    let sub = vec3(0.018, 0.012, 0.006) * (1.0 - (-(nutrient * 0.6).max(0.0)).exp());
     let g = 1.0 - (-(biomass * exposure).max(0.0)).exp();
     // cyan-green glow with a brighter, whiter core where biomass is thick
     let glow = vec3(0.20, 1.0, 0.70) * g + vec3(0.5, 0.95, 1.0) * (g * g) * 0.6;
-    let lin = sub + glow;
+    // resource shimmer: translocating sugar pulses cooler/brighter, but only along
+    // lit hyphae (gated by g), so open space never shimmers
+    let flow = 1.0 - (-(resource * 0.5).max(0.0)).exp();
+    let shimmer = vec3(0.4, 0.9, 1.0) * (flow * g) * 0.8;
+    let lin = sub + glow + shimmer;
     let tm = |v: f32| {
         let m = v / (1.0 + v);
         m.max(0.0).powf(0.4545)
@@ -798,13 +836,38 @@ mod tests {
 
     #[test]
     fn shade_bounded_and_dark_when_empty() {
-        for &(b, n) in &[(0.0, 0.0), (1.0, 0.0), (10.0, 3.0), (0.0, 5.0)] {
-            let col = shade(b, n, 1.0);
+        for &(b, n, r) in &[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (10.0, 3.0, 5.0), (0.0, 5.0, 0.0), (4.0, 0.0, 9.0)] {
+            let col = shade(b, n, r, 1.0);
             for v in [col.x, col.y, col.z] {
-                assert!(v.is_finite() && (0.0..=1.0).contains(&v));
+                assert!(v.is_finite() && (0.0..=1.0).contains(&v), "channel {v} out of range");
             }
         }
-        assert_eq!(shade(0.0, 0.0, 1.0), glam::Vec3::ZERO);
-        assert!(shade(4.0, 0.0, 1.0).y > shade(0.4, 0.0, 1.0).y, "denser mycelium glows brighter");
+        assert_eq!(shade(0.0, 0.0, 0.0, 1.0), glam::Vec3::ZERO, "empty space is black");
+        assert!(shade(4.0, 0.0, 0.0, 1.0).y > shade(0.4, 0.0, 0.0, 1.0).y, "denser mycelium glows brighter");
+        // sugar flowing through a cord brightens it; sugar with no hypha does nothing
+        assert!(
+            shade(2.0, 0.0, 8.0, 1.0).length() > shade(2.0, 0.0, 0.0, 1.0).length(),
+            "resource shimmer brightens a lit cord"
+        );
+        assert_eq!(shade(0.0, 0.0, 8.0, 1.0), glam::Vec3::ZERO, "resource in open space never glows");
+    }
+
+    #[test]
+    fn spawn_scatter_in_bounds_distinct_deterministic() {
+        let mut p = params();
+        p.seed_tips = 64;
+        for i in 0..p.seed_tips {
+            let t = spawn_scatter(i, &p);
+            assert_eq!(t, spawn_scatter(i, &p), "deterministic from i");
+            assert!(t.alive > 0.0);
+            assert!(
+                t.x >= 0.0 && t.x < p.width as f32 && t.y >= 0.0 && t.y < p.height as f32,
+                "tip in bounds: ({}, {})",
+                t.x,
+                t.y
+            );
+        }
+        assert_ne!(spawn_scatter(0, &p), spawn_scatter(1, &p), "distinct tips");
+        assert_eq!(spawn_scatter(p.seed_tips, &p).alive, 0.0, "beyond seed_tips = dead");
     }
 }

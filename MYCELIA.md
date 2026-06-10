@@ -107,11 +107,18 @@ cell: forage (income + deplete). Branch stochastically when resource-rich. Anast
       routes equilibrate independently by length, so the numbers cross-validate. Tuned
       α=0.2, K=8, adapt_rate=0.08, atrophy=0.03 on CPU. `mycelium_adapt_cs` compiles to
       SPIR-V + transpiles naga→WGSL. 15/15 mycelium tests green. 2026-06-10.
-- [ ] **T4 — GPU + page.** rust-gpu entries for grow/transport/adapt/render; WebGPU multi-pass
-      pipeline (ping-pong resource, K transport sub-dispatches); bioluminescent render
-      (biomass glow colony-hued, nutrient substrate warmth, resource glow along cords);
-      mouse = drop a nutrient bolus and watch the network forage to it. Headless verify.
-      GPU-vs-CPU gate on a deterministic setup.
+- [~] **T4 — GPU + page.** DONE: all five rust-gpu entries (scatter-spawn / grow / transport /
+      adapt+feed / render) compile + transpile naga→WGSL; `web/mycelium.html` runs the full
+      multi-pass pipeline (ping-pong resource, K=6 transport sub-dispatches, per-frame
+      grow→transport→adapt→render→present, zero readback); bioluminescent render (foxfire
+      cyan-green cord glow + resource shimmer on a near-black substrate); mouse drops a
+      nutrient disk (folded into the adapt pass — a standalone single-`&mut[f32]` threads(8,8)
+      entry is silently culled by this rust-gpu build, a real gotcha worth recording);
+      scattered inoculation seeds a living field. Reusable headless verifier `web/headless.py`
+      (serves web/, runs `?auto` in headless WebGPU Chrome, captures beacons) — **verified OK**:
+      304 frames, field alive, no error. 2026-06-10. REMAINING: the GPU-vs-CPU determinism
+      gate (deterministic single-tip grow + fixed transport field, GPU readback vs CPU) and
+      cord-between-colonies look — carried to the next verification/polish pass.
 - [ ] **T5 — Competition & zone lines.** Multi-colony: rival-biomass avoidance in growth,
       `barrier` deposition + mutual suppression at interfaces → permanent spalted-wood lines.
 - [ ] **T6 — Life cycle (the payoff).** Fruiting detection (biomass+resource > threshold),

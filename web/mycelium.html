@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Mycelium — a living network that solves its environment</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #000; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+  #overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; background: #000; color: #cfe; z-index: 10;
+    text-align: center; gap: 14px; cursor: pointer;
+  }
+  #overlay h1 { font-weight: 600; font-size: clamp(22px, 4vw, 40px); letter-spacing: 0.5px; }
+  #overlay h1 b { color: #5fe6b0; }
+  #overlay p { max-width: 600px; line-height: 1.55; color: #8aa; font-size: 14px; }
+  #overlay .go { margin-top: 6px; padding: 12px 28px; border: 1px solid #5fe6b0; border-radius: 30px; color: #5fe6b0; font-size: 15px; }
+  #hud {
+    position: fixed; left: 12px; bottom: 12px; z-index: 5; color: #6fe6b6; opacity: 0.6;
+    font: 11px ui-monospace, monospace; pointer-events: none; text-shadow: 0 0 6px #000;
+  }
+  #panel {
+    position: fixed; top: 12px; right: 12px; z-index: 5; width: 232px;
+    background: rgba(6,12,10,0.72); border: 1px solid rgba(95,230,176,0.18);
+    border-radius: 12px; padding: 12px 14px; color: #bdd; font-size: 12px;
+    backdrop-filter: blur(8px); transition: transform .25s, opacity .25s;
+  }
+  #panel.hidden { transform: translateX(262px); opacity: 0; }
+  #panel h2 { font-size: 12px; color: #5fe6b0; margin-bottom: 8px; letter-spacing: 1px; text-transform: uppercase; }
+  #panel label { display: block; margin: 9px 0 2px; color: #8a9; }
+  #panel input[type=range] { width: 100%; accent-color: #5fe6b0; }
+  #panel .row { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  #panel button {
+    flex: 1; min-width: 60px; padding: 6px 4px; background: rgba(95,230,176,0.1);
+    border: 1px solid rgba(95,230,176,0.3); color: #aed; border-radius: 7px; cursor: pointer; font-size: 11px;
+  }
+  #panel button:hover { background: rgba(95,230,176,0.22); }
+  #toggle {
+    position: fixed; top: 12px; right: 12px; z-index: 6; width: 34px; height: 34px;
+    background: rgba(6,12,10,0.72); border: 1px solid rgba(95,230,176,0.18); border-radius: 9px;
+    color: #5fe6b0; cursor: pointer; display: none; align-items: center; justify-content: center; font-size: 16px;
+  }
+  #cap { position: fixed; left: 12px; top: 12px; z-index: 5; color: #586; font-size: 11px; opacity: 0.6; max-width: 320px; line-height: 1.45; }
+  #cap a { color: #5fe6b0; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="cap">Mycelium — a fungal network foraging, transporting sugar, and reinforcing its efficient routes. The entire simulation is unit-tested Rust, compiled to your GPU by <a href="https://github.com/Rust-GPU/rust-gpu" target="_blank">rust-gpu</a>. <b>Click / drag to drop food.</b></div>
+<div id="hud"></div>
+<button id="toggle">⚙</button>
+<div id="panel">
+  <h2>Mycelium</h2>
+  <label>hyphal tips: <span id="vTips"></span></label><input id="tips" type="range" min="2000" max="80000" step="1000">
+  <label>sensor distance</label><input id="sensorDist" type="range" min="2" max="20" step="0.5">
+  <label>growth cost</label><input id="growthCost" type="range" min="0.05" max="1.2" step="0.05">
+  <label>forage income</label><input id="forageIncome" type="range" min="0.3" max="3" step="0.1">
+  <label>reinforce (adapt)</label><input id="adaptRate" type="range" min="0.01" max="0.3" step="0.01">
+  <label>atrophy (prune)</label><input id="atrophy" type="range" min="0" max="0.1" step="0.005">
+  <label>exposure</label><input id="exposure" type="range" min="0.4" max="4" step="0.05">
+  <div class="row">
+    <button data-preset="forest">Forest floor</button>
+    <button data-preset="petri">Petri dish</button>
+  </div>
+  <div class="row">
+    <button id="reset">Reset</button>
+    <button id="pause">Pause</button>
+    <button id="shot">Save PNG</button>
+  </div>
+</div>
+
+<div id="overlay">
+  <h1>Mycelium · <b>a living network that solves its environment</b></h1>
+  <p>Thousands of hyphal tips forage across a nutrient field, lay down a permanent web, translocate sugar through it, and — by a coupled per-frame relaxation solver — thicken the routes that carry the most and prune the rest. It finds efficient supply paths. Every step is ordinary, unit-tested Rust, compiled to your GPU by rust-gpu and verifiable on the CPU. Drop food and watch it reach.</p>
+  <div class="go">click to begin →</div>
+</div>
+
+<script>
+const PRESETS = {
+  forest: { sensorDist: 8, growthCost: 0.45, forageIncome: 1.0, adaptRate: 0.1, atrophy: 0.05, exposure: 1.4, tips: 16000 },
+  petri:  { sensorDist: 5, growthCost: 0.3, forageIncome: 1.6, adaptRate: 0.07, atrophy: 0.03, exposure: 1.8, tips: 12000 },
+};
+
+const state = {
+  nTips: 16000,
+  moveLen: 1.0, sensorAngle: 0.5, sensorDist: 8.0, turn: 0.35,
+  deposit: 1.0, forageRate: 0.25, branchProb: 0.0, branchAngle: 0.6,
+  minBranchAge: 6.0, anastomosisThresh: 6.0,
+  alpha: 0.2, kHalf: 2.0, growthCost: 0.45, forageIncome: 1.0,
+  adaptRate: 0.1, atrophy: 0.05,
+  mouseX: -1, mouseY: -1, mouseR: 0, mouseFood: 6.0,
+  exposure: 1.4,
+  transportK: 6,
+  paused: false,
+};
+
+const isAuto = new URLSearchParams(location.search).has("auto");
+const beacon = (m) => fetch("/AUTO/" + encodeURIComponent(m)).catch(() => {});
+const hud = document.getElementById("hud");
+const status = (m) => { hud.textContent = m; };
+
+let device, ctx, format, W, H, NCELLS;
+let bufParams, bufTips, bufNutrient, bufBiomass, bufResource = [], bufFlux, bufColor, bufDims;
+let pipeScatter, pipeGrow, pipeTransport, pipeAdapt, pipeRender, pipePresent;
+let bgPresent;
+let resCur = 0, frame = 0, running = false;
+
+// Params is 26 x 4 bytes = 104, matching gpu_shared::mycelium::Params (repr(C), all u32/f32).
+function paramsBytes() {
+  const ab = new ArrayBuffer(104);
+  const u = new Uint32Array(ab), f = new Float32Array(ab);
+  u[0] = W; u[1] = H; u[2] = state.nTips; u[3] = frame;
+  f[4] = state.moveLen; f[5] = state.sensorAngle; f[6] = state.sensorDist; f[7] = state.turn;
+  f[8] = state.deposit; f[9] = state.forageRate; f[10] = state.branchProb; f[11] = state.branchAngle;
+  f[12] = state.minBranchAge; f[13] = state.anastomosisThresh; f[14] = state.alpha; f[15] = state.kHalf;
+  f[16] = state.growthCost; f[17] = state.forageIncome; f[18] = state.adaptRate; f[19] = state.atrophy;
+  f[20] = state.mouseX; f[21] = state.mouseY; f[22] = state.mouseR; f[23] = state.mouseFood;
+  f[24] = state.exposure; u[25] = state.nTips; // seed_tips == n_tips: every scattered tip alive
+  return ab;
+}
+
+const PRESENT_WGSL = `
+@group(0) @binding(0) var<storage, read> color: array<u32>;
+@group(0) @binding(1) var<uniform> dims: vec2<u32>;
+@vertex fn vmain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+  var p = array<vec2<f32>, 3>(vec2<f32>(-1.,-1.), vec2<f32>(3.,-1.), vec2<f32>(-1.,3.));
+  return vec4<f32>(p[vi], 0., 1.);
+}
+@fragment fn fmain(@builtin(position) fc: vec4<f32>) -> @location(0) vec4<f32> {
+  let x = u32(fc.x); let y = u32(fc.y);
+  if (x >= dims.x || y >= dims.y) { return vec4<f32>(0.,0.,0.,1.); }
+  let v = color[y * dims.x + x];
+  let r = f32(v & 0xffu) / 255.;
+  let g = f32((v >> 8u) & 0xffu) / 255.;
+  let b = f32((v >> 16u) & 0xffu) / 255.;
+  return vec4<f32>(r, g, b, 1.);
+}`;
+
+async function init() {
+  if (!navigator.gpu) throw new Error("WebGPU not available");
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+  if (!adapter) throw new Error("no GPU adapter");
+  const lim = adapter.limits;
+  device = await adapter.requestDevice({
+    requiredLimits: {
+      maxStorageBufferBindingSize: lim.maxStorageBufferBindingSize,
+      maxBufferSize: lim.maxBufferSize,
+      maxComputeWorkgroupsPerDimension: lim.maxComputeWorkgroupsPerDimension,
+    },
+  });
+  device.addEventListener?.("uncapturederror", (e) => { status("gpu error: " + e.error.message); console.error(e.error); });
+
+  const canvas = document.getElementById("c");
+  ctx = canvas.getContext("webgpu");
+  format = navigator.gpu.getPreferredCanvasFormat();
+
+  // sim runs 1:1 with the canvas; clamp dpr to keep the K-iteration transport affordable
+  const dpr = Math.min(devicePixelRatio || 1, 1.0);
+  W = Math.floor((isAuto ? 960 : innerWidth) * dpr);
+  H = Math.floor((isAuto ? 600 : innerHeight) * dpr);
+  canvas.width = W; canvas.height = H;
+  NCELLS = W * H;
+  ctx.configure({ device, format, alphaMode: "opaque" });
+
+  const code = await (await fetch("./kernels.wgsl", { cache: "no-store" })).text();
+  const module = device.createShaderModule({ code });
+  const present = device.createShaderModule({ code: PRESENT_WGSL });
+
+  const cp = (entryPoint) => device.createComputePipeline({ layout: "auto", compute: { module, entryPoint } });
+  pipeScatter = cp("mycelium_spawn_scatter_cs");
+  pipeGrow = cp("mycelium_grow_cs");
+  pipeTransport = cp("mycelium_transport_cs");
+  pipeAdapt = cp("mycelium_adapt_cs");
+  pipeRender = cp("mycelium_render_cs");
+  pipePresent = device.createRenderPipeline({
+    layout: "auto",
+    vertex: { module: present, entryPoint: "vmain" },
+    fragment: { module: present, entryPoint: "fmain", targets: [{ format }] },
+    primitive: { topology: "triangle-list" },
+  });
+
+  allocate();
+  spawn();
+}
+
+function allocate() {
+  const S = (n) => device.createBuffer({ size: n, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+  bufParams = device.createBuffer({ size: 104, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  bufTips = S(state.nTips * 24);          // Tip = 6 x f32
+  bufNutrient = S(NCELLS * 4);
+  bufBiomass = S(NCELLS * 4);
+  bufResource = [S(NCELLS * 4), S(NCELLS * 4)];
+  bufFlux = S(NCELLS * 4);
+  bufColor = S(NCELLS * 4);
+  bufDims = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(bufDims, 0, new Uint32Array([W, H, 0, 0]));
+  bgPresent = device.createBindGroup({
+    layout: pipePresent.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: bufColor } }, { binding: 1, resource: { buffer: bufDims } }],
+  });
+}
+
+// Initial nutrient: a faint ambient substrate (so tips can charge up and grow
+// anywhere) plus rich blobs that create gradients for chemotropism to climb.
+function seedNutrient() {
+  const nut = new Float32Array(NCELLS);
+  nut.fill(0.4); // faint ambient: tips can charge up anywhere, but food patches dominate
+  const blobs = 10 + Math.floor((W * H) / 250000);
+  for (let b = 0; b < blobs; b++) {
+    const cx = Math.random() * W, cy = Math.random() * H;
+    const rad = 40 + Math.random() * 130, amp = 3 + Math.random() * 5;
+    const r2 = rad * rad;
+    const x0 = Math.max(0, Math.floor(cx - rad)), x1 = Math.min(W, Math.ceil(cx + rad));
+    const y0 = Math.max(0, Math.floor(cy - rad)), y1 = Math.min(H, Math.ceil(cy + rad));
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+      const d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+      if (d2 < r2) nut[y * W + x] += amp * (1 - d2 / r2);
+    }
+  }
+  return nut;
+}
+
+function spawn() {
+  const zeros = new Float32Array(NCELLS);
+  device.queue.writeBuffer(bufBiomass, 0, zeros);
+  device.queue.writeBuffer(bufResource[0], 0, zeros);
+  device.queue.writeBuffer(bufResource[1], 0, zeros);
+  device.queue.writeBuffer(bufFlux, 0, zeros);
+  device.queue.writeBuffer(bufNutrient, 0, seedNutrient());
+  frame = 0; resCur = 0;
+  device.queue.writeBuffer(bufParams, 0, paramsBytes());
+
+  const bg = device.createBindGroup({
+    layout: pipeScatter.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: bufParams } }, { binding: 1, resource: { buffer: bufTips } }],
+  });
+  const enc = device.createCommandEncoder();
+  const p = enc.beginComputePass();
+  p.setPipeline(pipeScatter); p.setBindGroup(0, bg);
+  p.dispatchWorkgroups(Math.ceil(state.nTips / 64));
+  p.end();
+  device.queue.submit([enc.finish()]);
+}
+
+function frameStep() {
+  device.queue.writeBuffer(bufParams, 0, paramsBytes());
+  const enc = device.createCommandEncoder();
+  const gx = Math.ceil(W / 8), gy = Math.ceil(H / 8);
+
+  // 1. grow: tips sense/steer/forage/extend; deposit biomass, spend resource
+  {
+    const bg = device.createBindGroup({ layout: pipeGrow.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: bufParams } },
+      { binding: 1, resource: { buffer: bufTips } },
+      { binding: 2, resource: { buffer: bufNutrient } },
+      { binding: 3, resource: { buffer: bufBiomass } },
+      { binding: 4, resource: { buffer: bufResource[resCur] } }] });
+    const p = enc.beginComputePass();
+    p.setPipeline(pipeGrow); p.setBindGroup(0, bg);
+    p.dispatchWorkgroups(Math.ceil(state.nTips / 64)); p.end();
+  }
+  // 2. transport x K: resource diffuses along biomass, flux accumulates
+  for (let k = 0; k < state.transportK; k++) {
+    const bg = device.createBindGroup({ layout: pipeTransport.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: bufParams } },
+      { binding: 1, resource: { buffer: bufBiomass } },
+      { binding: 2, resource: { buffer: bufResource[resCur] } },
+      { binding: 3, resource: { buffer: bufResource[1 - resCur] } },
+      { binding: 4, resource: { buffer: bufFlux } }] });
+    const p = enc.beginComputePass();
+    p.setPipeline(pipeTransport); p.setBindGroup(0, bg);
+    p.dispatchWorkgroups(gx, gy); p.end();
+    resCur = 1 - resCur;
+  }
+  // 3. adapt: thicken/prune biomass from flux, reset flux, apply mouse food drop
+  {
+    const bg = device.createBindGroup({ layout: pipeAdapt.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: bufParams } },
+      { binding: 1, resource: { buffer: bufBiomass } },
+      { binding: 2, resource: { buffer: bufFlux } },
+      { binding: 3, resource: { buffer: bufNutrient } }] });
+    const p = enc.beginComputePass();
+    p.setPipeline(pipeAdapt); p.setBindGroup(0, bg);
+    p.dispatchWorkgroups(gx, gy); p.end();
+  }
+  // 4. render: fields -> bioluminescent color
+  {
+    const bg = device.createBindGroup({ layout: pipeRender.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: bufParams } },
+      { binding: 1, resource: { buffer: bufNutrient } },
+      { binding: 2, resource: { buffer: bufBiomass } },
+      { binding: 3, resource: { buffer: bufResource[resCur] } },
+      { binding: 4, resource: { buffer: bufColor } }] });
+    const p = enc.beginComputePass();
+    p.setPipeline(pipeRender); p.setBindGroup(0, bg);
+    p.dispatchWorkgroups(gx, gy); p.end();
+  }
+  // 5. present
+  {
+    const pass = enc.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: "clear", storeOp: "store" }] });
+    pass.setPipeline(pipePresent); pass.setBindGroup(0, bgPresent);
+    pass.draw(3); pass.end();
+  }
+  device.queue.submit([enc.finish()]);
+  frame++;
+}
+
+let fpsT = performance.now(), fpsN = 0, fps = 0;
+function loop() {
+  if (!running) return;
+  if (!state.paused) frameStep();
+  fpsN++;
+  const now = performance.now();
+  if (now - fpsT > 500) {
+    fps = Math.round(fpsN * 1000 / (now - fpsT)); fpsN = 0; fpsT = now;
+    status(`${(state.nTips / 1000).toFixed(0)}k tips · ${W}×${H} · K=${state.transportK} · ${fps} fps`);
+  }
+  requestAnimationFrame(loop);
+}
+
+// ---------- controls ----------
+function bindControls() {
+  const map = [["tips","nTips"],["sensorDist","sensorDist"],["growthCost","growthCost"],
+    ["forageIncome","forageIncome"],["adaptRate","adaptRate"],["atrophy","atrophy"],["exposure","exposure"]];
+  for (const [id, key] of map) {
+    const el = document.getElementById(id);
+    el.value = state[key];
+    el.oninput = () => {
+      state[key] = parseFloat(el.value);
+      if (id === "tips") { document.getElementById("vTips").textContent = (state.nTips / 1000).toFixed(0) + "k"; reallocTips(); }
+    };
+  }
+  document.getElementById("vTips").textContent = (state.nTips / 1000).toFixed(0) + "k";
+  document.querySelectorAll("[data-preset]").forEach(b => b.onclick = () => applyPreset(b.dataset.preset));
+  document.getElementById("reset").onclick = () => spawn();
+  document.getElementById("pause").onclick = (e) => { state.paused = !state.paused; e.target.textContent = state.paused ? "Play" : "Pause"; };
+  document.getElementById("shot").onclick = saveShot;
+  const panel = document.getElementById("panel"), toggle = document.getElementById("toggle");
+  toggle.onclick = () => { panel.classList.remove("hidden"); toggle.style.display = "none"; };
+  document.getElementById("c").ondblclick = () => { panel.classList.add("hidden"); toggle.style.display = "flex"; };
+}
+
+function applyPreset(name) {
+  Object.assign(state, PRESETS[name]);
+  for (const id of ["sensorDist","growthCost","forageIncome","adaptRate","atrophy","exposure","tips"]) {
+    const el = document.getElementById(id); if (el) el.value = state[id === "tips" ? "nTips" : id];
+  }
+  document.getElementById("vTips").textContent = (state.nTips / 1000).toFixed(0) + "k";
+  reallocTips(true);
+}
+
+let reallocPending = null;
+function reallocTips(now) {
+  clearTimeout(reallocPending);
+  const go = () => { bufTips.destroy?.(); bufTips = device.createBuffer({ size: state.nTips * 24, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC }); spawn(); };
+  if (now) go(); else reallocPending = setTimeout(go, 160);
+}
+
+function pointer(e, down) {
+  const r = e.target.getBoundingClientRect();
+  const dpr = W / r.width;
+  state.mouseX = (e.clientX - r.left) * dpr;
+  state.mouseY = (e.clientY - r.top) * dpr;
+  if (down !== undefined) state.mouseR = down ? 60 * dpr : 0;
+}
+function wireMouse() {
+  const c = document.getElementById("c");
+  c.addEventListener("pointerdown", (e) => { pointer(e, true); c.setPointerCapture(e.pointerId); });
+  c.addEventListener("pointermove", (e) => { if (state.mouseR > 0) pointer(e); });
+  c.addEventListener("pointerup", () => { state.mouseR = 0; });
+  c.addEventListener("pointerleave", () => { state.mouseR = 0; });
+}
+
+function saveShot() {
+  document.getElementById("c").toBlob((blob) => {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "mycelium.png"; a.click();
+  });
+}
+
+// ---------- boot ----------
+async function boot() {
+  try {
+    await init();
+    bindControls();
+    wireMouse();
+    running = true;
+    document.getElementById("overlay").remove();
+    loop();
+  } catch (e) {
+    status("error: " + e.message); console.error(e);
+    if (isAuto) beacon("MYCELIUM-ERROR " + e.message);
+  }
+}
+
+document.getElementById("overlay").onclick = boot;
+
+if (isAuto) {
+  (async () => {
+    try {
+      await init();
+      running = true;
+      document.getElementById("overlay")?.remove();
+      // grow a network headless, then report the field is alive
+      for (let i = 0; i < 300; i++) frameStep();
+      loop();
+      const rb = device.createBuffer({ size: NCELLS * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const enc = device.createCommandEncoder();
+      enc.copyBufferToBuffer(bufColor, 0, rb, 0, NCELLS * 4);
+      device.queue.submit([enc.finish()]);
+      await rb.mapAsync(GPUMapMode.READ);
+      const px = new Uint32Array(rb.getMappedRange());
+      let lit = 0, rsum = 0, gsum = 0, bsum = 0;
+      for (let i = 0; i < px.length; i += 97) {
+        const v = px[i];
+        const r = v & 255, g = (v >> 8) & 255, b = (v >> 16) & 255;
+        if (r + g + b > 12) lit++;
+        rsum += r; gsum += g; bsum += b;
+      }
+      const n = Math.ceil(px.length / 97);
+      beacon(`MYCELIUM frames=${frame} lit=${(100 * lit / n).toFixed(1)}% meanRGB=${(rsum / n).toFixed(1)},${(gsum / n).toFixed(1)},${(bsum / n).toFixed(1)} tips=${state.nTips} ${W}x${H}`);
+      beacon("MYCELIUM-DONE");
+    } catch (e) { beacon("MYCELIUM-ERROR " + e.message); }
+  })();
+}
+</script>
+</body>
+</html>

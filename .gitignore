@@ -11,3 +11,4 @@ hand-*.spv
 /fuzz-shaders/spv/
 /fuzz-findings/
 web/mycelia-shot.png
+/web/_shot.png

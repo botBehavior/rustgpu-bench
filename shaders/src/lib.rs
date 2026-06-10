@@ -199,7 +199,9 @@ pub fn mycelium_grow_cs(
     if step.advanced == 1 {
         biomass[step.cell as usize] += params.deposit; // lay new hypha (non-atomic)
     }
-    // branch append (atomic counter) is wired in T4
+    // step.child (branching) is ignored here: dynamic tip-append needs an atomic
+    // counter, which MYCELIA.md groups with T6's spore spawn. The interactive page
+    // seeds a dense scattered population instead, so the network is full without it.
 }
 
 /// One Jacobi relaxation of the resource-transport solver (T2). One thread per
@@ -226,14 +228,18 @@ pub fn mycelium_transport_cs(
 }
 
 /// T3 adaptation pass (Tero feedback): thicken/prune biomass from the flux the K
-/// transport iterations accumulated, then reset flux for the next frame. One
-/// thread per cell.
+/// transport iterations accumulated, then reset flux for the next frame. Also
+/// applies the interactive mouse nutrient drop (a soft disk of food at the cursor)
+/// — folded in here because it shares this per-cell dispatch, and a standalone
+/// single-`&mut[f32]` threads(8,8) entry is silently culled by this rust-gpu
+/// build. One thread per cell.
 #[spirv(compute(threads(8, 8)))]
 pub fn mycelium_adapt_cs(
     #[spirv(global_invocation_id)] id: UVec3,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &MycParams,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] biomass: &mut [f32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] flux: &mut [f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] nutrient: &mut [f32],
 ) {
     let x = id.x;
     let y = id.y;
@@ -243,6 +249,30 @@ pub fn mycelium_adapt_cs(
     let i = (y * params.width + x) as usize;
     biomass[i] = gpu_shared::mycelium::adapt_at(biomass[i], flux[i], params);
     flux[i] = 0.0; // reset for next frame's transport accumulation
+
+    // interactive feed: soft disk of nutrient at the mouse (mouse_r <= 0 disables)
+    if params.mouse_r > 0.0 {
+        let dx = x as f32 - params.mouse_x;
+        let dy = y as f32 - params.mouse_y;
+        let d2 = dx * dx + dy * dy;
+        let r2 = params.mouse_r * params.mouse_r;
+        if d2 <= r2 {
+            nutrient[i] += params.mouse_food * (1.0 - d2 / r2);
+        }
+    }
+}
+
+/// Scattered inoculation: one thread per tip, random position + heading.
+#[spirv(compute(threads(64)))]
+pub fn mycelium_spawn_scatter_cs(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &MycParams,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] tips: &mut [MycTip],
+) {
+    let i = id.x;
+    if i < params.n_tips {
+        tips[i as usize] = gpu_shared::mycelium::spawn_scatter(i, params);
+    }
 }
 
 #[spirv(compute(threads(8, 8)))]
@@ -251,7 +281,8 @@ pub fn mycelium_render_cs(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &MycParams,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] nutrient: &[f32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] biomass: &[f32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] out: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] resource: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] out: &mut [u32],
 ) {
     let x = id.x;
     let y = id.y;
@@ -259,7 +290,7 @@ pub fn mycelium_render_cs(
         return;
     }
     let i = (y * params.width + x) as usize;
-    let col = gpu_shared::mycelium::shade(biomass[i], nutrient[i], params.exposure);
+    let col = gpu_shared::mycelium::shade(biomass[i], nutrient[i], resource[i], params.exposure);
     let r = (col.x * 255.0) as u32;
     let g = (col.y * 255.0) as u32;
     let b = (col.z * 255.0) as u32;
