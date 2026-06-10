@@ -13,6 +13,22 @@ pub fn matmul_element(a: &[f32], b: &[f32], n: u32, row: u32, col: u32) -> f32 {
     acc
 }
 
+/// B3 experiment: same matmul with unchecked indexing — isolates the cost of
+/// slice bounds checks in rust-gpu output (the leading hypothesis for the
+/// ~15% matmul gap vs hand-WGSL).
+///
+/// # Safety
+/// Caller guarantees row < n, col < n, and a/b are n*n long.
+pub unsafe fn matmul_element_unchecked(a: &[f32], b: &[f32], n: u32, row: u32, col: u32) -> f32 {
+    let mut acc = 0.0f32;
+    let mut k = 0u32;
+    while k < n {
+        acc += a.get_unchecked((row * n + k) as usize) * b.get_unchecked((k * n + col) as usize);
+        k += 1;
+    }
+    acc
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

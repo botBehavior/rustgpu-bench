@@ -24,10 +24,11 @@ sizes, same buffers, correctness-gated, timestamp-queried, independently cross-c
 | matmul, 1024³ | 1.798 ms | 1.794 ms | **1.566 ms** |
 | path tracer, 800×450 @ 32 spp | 1.098 ms | 1.360 ms | **0.598 ms** |
 
-Honest summary: parity (actually a slight win) on branchy integer code, ~15% behind on
-matmul, **1.84× behind on the path tracer** — a real, measured codegen-quality gap, not
-hidden. Full data, methodology, and caveats: [RESULTS.md](RESULTS.md). Analysis of the
-gap: `ANALYSIS.md` (in progress).
+Honest summary: parity (actually a slight win) on branchy integer code; the matmul gap is
+**bounds checks** (with `get_unchecked` rust-gpu hits 0.696 ms — 2.1× *faster* than
+hand-WGSL); the path tracer is **1.84× behind**, root-caused to codegen shape (one
+flattened 40-Phi mega-function vs naga's structured output), not math or bloat. Full data
+and methodology: [RESULTS.md](RESULTS.md). Evidence chain: [ANALYSIS.md](ANALYSIS.md).
 
 ## Layout
 

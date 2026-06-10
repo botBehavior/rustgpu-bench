@@ -21,22 +21,22 @@ completed item with trailer `Co-Authored-By: Ferra <Ferra@Fable5>`. Rules of con
 
 ## Phase B — explain the 1.84× tracer gap (GREEN)
 
-- [ ] B1. Get a SPIR-V disassembler working (try in order: `spirv-dis` from an installed
+- [x] (2026-06-10 built tools/spirv-stats on rspirv; histograms done both arms) B1. Get a SPIR-V disassembler working (try in order: `spirv-dis` from an installed
       Vulkan SDK; `cargo install spirv-tools` if it ships bins; else a 20-line bin crate
       on `rspirv` that dumps opcode histograms). Produce opcode histograms for `render_cs`
       from (a) the rust-gpu .spv and (b) the hand-WGSL compiled to SPIR-V via `naga`.
-- [ ] B2. Structural diff: transpiled-rust-gpu WGSL (`web/kernels.wgsl`) vs hand
+- [x] (2026-06-10 via SPIR-V-level stats: 1 fn/74blk/40Phi vs 11 fn/84blk/~0Phi, counts in ANALYSIS.md) B2. Structural diff: transpiled-rust-gpu WGSL (`web/kernels.wgsl`) vs hand
       `shaders-wgsl/render.wgsl` — count branches, temporaries, bounds checks, loop
       shapes. Record concrete differences, not impressions.
-- [ ] B3. Hypothesis micro-tests (one kernel each, added to bench as optional workloads):
+- [x] (2026-06-10 matmul_unchecked: 2.5× CONFIRMS bounds checks; render_v2: no change, can't discriminate inlining-by-policy; transcendental test unnecessary — ExtInst evidence refutes it directly) B3. Hypothesis micro-tests (one kernel each, added to bench as optional workloads):
       (a) transcendental-heavy loop (sin/cos/sqrt torture) rust-gpu vs hand-WGSL —
       isolates math-function lowering; (b) slice-indexing-heavy loop vs the same logic
       with iterator/`get_unchecked` (if rust-gpu accepts it) — isolates bounds checks;
       (c) struct-returning function chain — isolates the Sphere/Hit struct pattern.
-- [ ] B4. Try the experimental qptr pipeline on the tracer
+- [x] (2026-06-10 builds via RUSTGPU_CODEGEN_ARGS env, verifies correct on all workloads, perf unchanged — semantics project not perf lever) B4. Try the experimental qptr pipeline on the tracer
       (`RUSTGPU_CODEGEN_ARGS="--no-infer-storage-classes --spirt-passes=qptr"` — find the
       cargo-gpu way to pass it; if it builds, bench it; if not, record the failure mode).
-- [ ] B5. Write `gpu/ANALYSIS.md`: which hypothesis(es) the data confirms/refutes, with
+- [x] (2026-06-10 ANALYSIS.md written: 2 refuted, 1 confirmed, 1 supported-not-isolated, naga-tax bonus finding; RESULTS/README updated) B5. Write `gpu/ANALYSIS.md`: which hypothesis(es) the data confirms/refutes, with
       numbers. Update RESULTS.md's "candidate causes" paragraph to match the evidence.
       Commit + tag `analysis-<date>`.
 
@@ -91,3 +91,4 @@ completed item with trailer `Co-Authored-By: Ferra <Ferra@Fable5>`. Rules of con
 ## Loop log (append one line per completed item: date, item, outcome)
 
 - 2026-06-10 A1+A2+A3: repo initialized, initial commit 2b8f940 (27 files), tag bench-2026-06-10, README written. Phase A complete.
+- 2026-06-10 B1–B5: spirv-stats tool; gap root-caused — matmul = bounds checks (unchecked: 2.5× faster, beats hand-WGSL 2.1×), tracer = codegen shape (40-Phi mega-fn vs 11 structured fns; libm + bloat hypotheses refuted), naga arm tax = wgpu re-injected checks, qptr = correct but perf-neutral. ANALYSIS.md written. Phase B complete.

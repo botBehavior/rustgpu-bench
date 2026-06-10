@@ -45,19 +45,21 @@ version, which is why it exists.
 
 - **Branchy integer code: parity.** rust-gpu actually edges out hand-WGSL on Collatz. The
   "equivalent SPIR-V → equivalent speed" argument from the maintainer talk holds here.
-- **Matmul: ~15%.** Likely slice bounds-checking on the inner-loop indexing in the rust-gpu
-  arm (hypothesis, unconfirmed; naga adds its own checks to the WGSL arm, so it's not free
-  there either).
-- **Path tracer: 1.84× — the real gap.** Complex control flow + structs + math functions is
-  where rust-gpu's codegen pays today. Consistent supporting evidence: the naga-transpiled
-  text of the rust-gpu tracer is ~3× the size of the hand-written twin (flattened control
-  flow, redundant temporaries). Candidate causes, unverified: SPIR-T structurization output,
-  transcendental lowering, bounds checks on every slice access. This is a tractable
-  compiler-quality gap, not an architecture wall — and it's now measured, which nobody had
-  published before.
-- **The naga frontend costs extra** on short kernels (collatz 0.186 → 0.347 ms): the
-  SPIR-V → naga IR → backend round-trip re-adds bounds checks on top of rust-gpu's. On the
-  web path you pay this; budget for it.
+- **Matmul: ~15% — CONFIRMED as bounds checks** (see ANALYSIS.md). With `get_unchecked`,
+  rust-gpu drops 1.763 → **0.696 ms**: 2.5× faster than its checked self and 2.1× faster
+  than hand-WGSL (which carries wgpu's non-optional clamp checks). The biggest perf lever
+  in the whole study.
+- **Path tracer: 1.84× — codegen *shape*, not bloat.** Instruction counts are near-equal
+  (466 vs 426); the difference is structure: rust-gpu emits one flattened 74-block,
+  40-Phi mega-function (logical SPIR-V forbids pointer args → inline everything), naga
+  emits 11 small structured functions. "Software transcendentals" and "verbose codegen"
+  hypotheses are REFUTED (native ExtInst; near-equal counts). Supported-but-not-isolated;
+  full evidence chain in ANALYSIS.md. Tractable compiler work, not an architecture wall —
+  and now measured + characterized, which nobody had published before.
+- **The naga frontend costs extra** on short kernels (collatz 0.186 → 0.347 ms): wgpu
+  re-injects runtime bounds checks when consuming SPIR-V through naga (its security
+  model) — confirmed by the unchecked-matmul arm losing its entire 2.5× win on the naga
+  path. On the web every language pays this tax equally; budget for it.
 - **Module creation:** passthrough ≈ 0 ms, naga arms ≈ 1 ms per module. Negligible at app
   scale, but the naga step isn't free at load time either.
 

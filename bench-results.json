@@ -3,14 +3,18 @@
   "versions": {"rust-gpu": "0.10.0-alpha.1", "toolchain": "nightly-2026-04-11", "wgpu": "29.0.3", "naga": "29.0.3"},
   "config": {"warmup": 3, "runs": 30, "collatz_len": 1048576, "matmul_n": 1024, "render": "800x450@32spp"},
   "results": [
-    {"workload":"collatz","arm":"rustgpu-spv","median_ms":0.1863,"p25_ms":0.1845,"p75_ms":0.1865,"module_create_ms":0.04,"runs":30,"note":"xcheck 0.318 ms; verified 1048576 exact"},
-    {"workload":"collatz","arm":"rustgpu-naga","median_ms":0.3463,"p25_ms":0.3460,"p75_ms":0.3482,"module_create_ms":0.91,"runs":30,"note":"xcheck 0.449 ms; verified 1048576 exact"},
-    {"workload":"collatz","arm":"hand-wgsl","median_ms":0.1966,"p25_ms":0.1962,"p75_ms":0.1967,"module_create_ms":0.28,"runs":30,"note":"xcheck 0.350 ms; verified 1048576 exact"},
-    {"workload":"matmul","arm":"rustgpu-spv","median_ms":1.7982,"p25_ms":1.6122,"p75_ms":2.0096,"module_create_ms":0.04,"runs":30,"note":"xcheck 2.265 ms; verified 1000 samples, worst rel 5.1e-6"},
-    {"workload":"matmul","arm":"rustgpu-naga","median_ms":1.7940,"p25_ms":1.6202,"p75_ms":2.1449,"module_create_ms":0.91,"runs":30,"note":"xcheck 2.355 ms; verified 1000 samples, worst rel 5.1e-6"},
-    {"workload":"matmul","arm":"hand-wgsl","median_ms":1.5664,"p25_ms":1.4520,"p75_ms":1.6613,"module_create_ms":0.25,"runs":30,"note":"xcheck 2.005 ms; verified 1000 samples, worst rel 5.1e-6"},
-    {"workload":"render","arm":"rustgpu-spv","median_ms":1.0981,"p25_ms":1.0917,"p75_ms":1.1061,"module_create_ms":0.04,"runs":30,"note":"xcheck 1.533 ms; verified, mean diff 9.3e-5"},
-    {"workload":"render","arm":"rustgpu-naga","median_ms":1.3601,"p25_ms":1.3475,"p75_ms":1.6816,"module_create_ms":0.91,"runs":30,"note":"xcheck 1.851 ms; verified, mean diff 9.3e-5"},
-    {"workload":"render","arm":"hand-wgsl","median_ms":0.5985,"p25_ms":0.5960,"p75_ms":0.6020,"module_create_ms":1.17,"runs":30,"note":"xcheck 0.856 ms; verified, mean diff 9.4e-5"}
+    {"workload":"collatz","arm":"rustgpu-spv","median_ms":0.1862,"p25_ms":0.1844,"p75_ms":0.1864,"module_create_ms":0.04,"runs":30,"note":"xcheck 0.339 ms; verified 1048576 exact"},
+    {"workload":"collatz","arm":"rustgpu-naga","median_ms":0.3462,"p25_ms":0.3460,"p75_ms":0.3483,"module_create_ms":1.19,"runs":30,"note":"xcheck 0.503 ms; verified 1048576 exact"},
+    {"workload":"collatz","arm":"hand-wgsl","median_ms":0.1965,"p25_ms":0.1962,"p75_ms":0.1967,"module_create_ms":0.23,"runs":30,"note":"xcheck 0.316 ms; verified 1048576 exact"},
+    {"workload":"matmul","arm":"rustgpu-spv","median_ms":1.8127,"p25_ms":1.6141,"p75_ms":2.1182,"module_create_ms":0.04,"runs":30,"note":"xcheck 2.291 ms; verified 1000 samples, worst rel 5.1e-6"},
+    {"workload":"matmul","arm":"rustgpu-naga","median_ms":1.7716,"p25_ms":1.6163,"p75_ms":2.0241,"module_create_ms":1.19,"runs":30,"note":"xcheck 2.320 ms; verified 1000 samples, worst rel 5.1e-6"},
+    {"workload":"matmul","arm":"hand-wgsl","median_ms":1.5200,"p25_ms":1.4562,"p75_ms":1.6649,"module_create_ms":0.19,"runs":30,"note":"xcheck 2.061 ms; verified 1000 samples, worst rel 5.1e-6"},
+    {"workload":"matmul_unchecked","arm":"rustgpu-spv","median_ms":0.6969,"p25_ms":0.6947,"p75_ms":0.7003,"module_create_ms":0.04,"runs":30,"note":"xcheck 0.940 ms; verified 1000 samples, worst rel 5.1e-6"},
+    {"workload":"matmul_unchecked","arm":"rustgpu-naga","median_ms":1.6984,"p25_ms":1.5363,"p75_ms":1.7473,"module_create_ms":1.19,"runs":30,"note":"xcheck 2.171 ms; verified 1000 samples, worst rel 5.1e-6"},
+    {"workload":"render","arm":"rustgpu-spv","median_ms":1.0792,"p25_ms":1.0716,"p75_ms":1.0879,"module_create_ms":0.04,"runs":30,"note":"xcheck 1.437 ms; verified, mean diff 9.3e-5"},
+    {"workload":"render","arm":"rustgpu-naga","median_ms":1.3866,"p25_ms":1.3801,"p75_ms":1.4048,"module_create_ms":1.19,"runs":30,"note":"xcheck 1.958 ms; verified, mean diff 9.3e-5"},
+    {"workload":"render","arm":"hand-wgsl","median_ms":0.6024,"p25_ms":0.5990,"p75_ms":0.6080,"module_create_ms":1.07,"runs":30,"note":"xcheck 0.763 ms; verified, mean diff 9.4e-5"},
+    {"workload":"render_v2","arm":"rustgpu-spv","median_ms":1.0815,"p25_ms":1.0751,"p75_ms":1.0976,"module_create_ms":0.04,"runs":30,"note":"xcheck 1.515 ms; verified, mean diff 9.3e-5"},
+    {"workload":"render_v2","arm":"rustgpu-naga","median_ms":1.3728,"p25_ms":1.3678,"p75_ms":1.8539,"module_create_ms":1.19,"runs":30,"note":"xcheck 1.980 ms; verified, mean diff 9.3e-5"}
   ]
 }

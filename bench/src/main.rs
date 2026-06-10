@@ -72,20 +72,24 @@ fn main() {
     let wgsl_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../shaders-wgsl");
     let mut results = Vec::new();
 
-    for workload in ["collatz", "matmul", "render"] {
-        // hand-WGSL module is per-workload (separate files)
-        let wgsl_src = std::fs::read_to_string(wgsl_dir.join(format!("{workload}.wgsl"))).unwrap();
-        let t = Instant::now();
-        let hand = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("hand-wgsl"),
-            source: wgpu::ShaderSource::Wgsl(wgsl_src.into()),
-        });
-        let hand_create_ms = t.elapsed().as_secs_f64() * 1e3;
+    for workload in ["collatz", "matmul", "matmul_unchecked", "render", "render_v2"] {
+        // hand-WGSL module is per-workload; experiment workloads (B3) have no
+        // hand twin — they compare rust-gpu variants against each other
+        let hand = std::fs::read_to_string(wgsl_dir.join(format!("{workload}.wgsl")))
+            .ok()
+            .map(|src| {
+                let t = Instant::now();
+                let m = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("hand-wgsl"),
+                    source: wgpu::ShaderSource::Wgsl(src.into()),
+                });
+                (m, t.elapsed().as_secs_f64() * 1e3)
+            });
 
         for (arm_name, module, module_ms) in arms
             .iter()
             .map(|(n, m, c)| (*n, m, *c))
-            .chain(std::iter::once(("hand-wgsl", &hand, hand_create_ms)))
+            .chain(hand.iter().map(|(m, c)| ("hand-wgsl", m, *c)))
         {
             let r = run_workload(&ctx, workload, module);
             match r {
@@ -179,8 +183,10 @@ struct Bufs {
 fn run_workload(ctx: &Ctx, workload: &str, module: &wgpu::ShaderModule) -> Result<Stats, String> {
     let spec = match workload {
         "collatz" => collatz_spec(ctx),
-        "matmul" => matmul_spec(ctx),
-        "render" => render_spec(ctx),
+        "matmul" => matmul_spec(ctx, "matmul_cs"),
+        "matmul_unchecked" => matmul_spec(ctx, "matmul_unchecked_cs"),
+        "render" => render_spec(ctx, "render_cs"),
+        "render_v2" => render_spec(ctx, "render_v2_cs"),
         _ => unreachable!(),
     };
 
@@ -391,7 +397,7 @@ fn lcg_floats(n: usize, mut state: u32) -> Vec<f32> {
         .collect()
 }
 
-fn matmul_spec(ctx: &Ctx) -> Bufs {
+fn matmul_spec(ctx: &Ctx, entry: &'static str) -> Bufs {
     let n = MATMUL_N;
     let a = lcg_floats((n * n) as usize, 1);
     let b = lcg_floats((n * n) as usize, 2);
@@ -406,11 +412,11 @@ fn matmul_spec(ctx: &Ctx) -> Bufs {
         reupload: vec![],
         read_binding: 3,
         workgroups: (n.div_ceil(16), n.div_ceil(16), 1),
-        entry: "matmul_cs",
+        entry,
     }
 }
 
-fn render_spec(ctx: &Ctx) -> Bufs {
+fn render_spec(ctx: &Ctx, entry: &'static str) -> Bufs {
     let params = [RENDER.width, RENDER.height, RENDER.samples, RENDER.seed];
     let out_size = (RENDER.width * RENDER.height * 3 * 4) as usize;
     Bufs {
@@ -422,7 +428,7 @@ fn render_spec(ctx: &Ctx) -> Bufs {
         reupload: vec![],
         read_binding: 1,
         workgroups: (RENDER.width.div_ceil(8), RENDER.height.div_ceil(8), 1),
-        entry: "render_cs",
+        entry,
     }
 }
 
@@ -433,6 +439,8 @@ fn verify(ctx: &Ctx, workload: &str, spec: &Bufs) -> Result<String, String> {
         spec.bufs[spec.read_binding].size(),
     );
     match workload {
+        "matmul_unchecked" => verify_matmul(&raw),
+        "render_v2" => verify_render(&raw),
         "collatz" => {
             let out: &[u32] = bytemuck::cast_slice(&raw);
             let bad = (1..=COLLATZ_LEN)
@@ -444,50 +452,54 @@ fn verify(ctx: &Ctx, workload: &str, spec: &Bufs) -> Result<String, String> {
                 Err(format!("{bad} mismatches"))
             }
         }
-        "matmul" => {
-            let out: &[f32] = bytemuck::cast_slice(&raw);
-            let n = MATMUL_N;
-            let a = lcg_floats((n * n) as usize, 1);
-            let b = lcg_floats((n * n) as usize, 2);
-            let mut state = 12345u32;
-            let mut worst = 0.0f32;
-            for _ in 0..1000 {
-                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
-                let row = (state >> 16) % n;
-                let col = state % n;
-                let expected = gpu_shared::matmul::matmul_element(&a, &b, n, row, col);
-                let diff = (out[(row * n + col) as usize] - expected).abs();
-                let rel = diff / expected.abs().max(1.0);
-                worst = worst.max(rel);
-            }
-            if worst < 1.0e-3 {
-                Ok(format!("verified 1000 samples, worst rel {worst:.1e}"))
-            } else {
-                Err(format!("worst rel diff {worst:.1e}"))
-            }
-        }
-        "render" => {
-            let out: &[f32] = bytemuck::cast_slice(&raw);
-            let mut sum = 0.0f64;
-            let mut count = 0usize;
-            // sample every 7th pixel to keep CPU verify fast
-            let mut i = 0u32;
-            while i < RENDER.width * RENDER.height {
-                let c = gpu_shared::render_pixel(i % RENDER.width, i / RENDER.width, &RENDER);
-                let base = (i * 3) as usize;
-                sum += ((out[base] - c.x).abs()
-                    + (out[base + 1] - c.y).abs()
-                    + (out[base + 2] - c.z).abs()) as f64;
-                count += 3;
-                i += 7;
-            }
-            let mean = sum / count as f64;
-            if mean < 1.0e-3 {
-                Ok(format!("verified, mean diff {mean:.1e}"))
-            } else {
-                Err(format!("mean diff {mean:.1e} too high"))
-            }
-        }
+        "matmul" => verify_matmul(&raw),
+        "render" => verify_render(&raw),
         _ => unreachable!(),
+    }
+}
+
+fn verify_matmul(raw: &[u8]) -> Result<String, String> {
+    let out: &[f32] = bytemuck::cast_slice(raw);
+    let n = MATMUL_N;
+    let a = lcg_floats((n * n) as usize, 1);
+    let b = lcg_floats((n * n) as usize, 2);
+    let mut state = 12345u32;
+    let mut worst = 0.0f32;
+    for _ in 0..1000 {
+        state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+        let row = (state >> 16) % n;
+        let col = state % n;
+        let expected = gpu_shared::matmul::matmul_element(&a, &b, n, row, col);
+        let diff = (out[(row * n + col) as usize] - expected).abs();
+        let rel = diff / expected.abs().max(1.0);
+        worst = worst.max(rel);
+    }
+    if worst < 1.0e-3 {
+        Ok(format!("verified 1000 samples, worst rel {worst:.1e}"))
+    } else {
+        Err(format!("worst rel diff {worst:.1e}"))
+    }
+}
+
+fn verify_render(raw: &[u8]) -> Result<String, String> {
+    let out: &[f32] = bytemuck::cast_slice(raw);
+    let mut sum = 0.0f64;
+    let mut count = 0usize;
+    // sample every 7th pixel to keep CPU verify fast
+    let mut i = 0u32;
+    while i < RENDER.width * RENDER.height {
+        let c = gpu_shared::render_pixel(i % RENDER.width, i / RENDER.width, &RENDER);
+        let base = (i * 3) as usize;
+        sum += ((out[base] - c.x).abs()
+            + (out[base + 1] - c.y).abs()
+            + (out[base + 2] - c.z).abs()) as f64;
+        count += 3;
+        i += 7;
+    }
+    let mean = sum / count as f64;
+    if mean < 1.0e-3 {
+        Ok(format!("verified, mean diff {mean:.1e}"))
+    } else {
+        Err(format!("mean diff {mean:.1e} too high"))
     }
 }

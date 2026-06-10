@@ -12,6 +12,7 @@ use glam::{vec3, Vec3};
 pub mod collatz;
 pub mod matmul;
 pub mod rng;
+pub mod tracer_v2;
 
 pub use collatz::{collatz_steps, MAX_STEPS};
 
@@ -75,7 +76,7 @@ fn sphere(i: u32) -> Sphere {
     }
 }
 
-fn reflect(v: Vec3, n: Vec3) -> Vec3 {
+pub(crate) fn reflect(v: Vec3, n: Vec3) -> Vec3 {
     v - 2.0 * v.dot(n) * n
 }
 
@@ -90,7 +91,7 @@ fn random_unit_vector(state: &mut u32) -> Vec3 {
     vec3(r * phi.cos(), r * phi.sin(), z)
 }
 
-struct Hit {
+pub(crate) struct Hit {
     t: f32,
     point: Vec3,
     normal: Vec3,
@@ -99,7 +100,7 @@ struct Hit {
     fuzz: f32,
 }
 
-fn hit_scene(origin: Vec3, dir: Vec3) -> Hit {
+pub(crate) fn hit_scene(origin: Vec3, dir: Vec3) -> Hit {
     let mut closest = Hit {
         t: T_MAX,
         point: Vec3::ZERO,
@@ -140,7 +141,7 @@ fn hit_scene(origin: Vec3, dir: Vec3) -> Hit {
     closest
 }
 
-fn sky(dir: Vec3) -> Vec3 {
+pub(crate) fn sky(dir: Vec3) -> Vec3 {
     let t = 0.5 * (dir.normalize().y + 1.0);
     (1.0 - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0)
 }
