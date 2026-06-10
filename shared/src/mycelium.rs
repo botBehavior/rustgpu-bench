@@ -71,6 +71,8 @@ pub struct Params {
     pub k_half: f32,             // biomass at half conductivity (saturating k)
     pub growth_cost: f32,        // resource consumed to extend one step
     pub forage_income: f32,      // resource produced per unit nutrient foraged
+    pub adapt_rate: f32,         // biomass gained per unit flux (cord reinforcement)
+    pub atrophy: f32,            // biomass decayed per step (prunes unused hyphae)
     pub exposure: f32,           // render gain
     pub seed_tips: u32,          // initial live tips (germinating spore)
 }
@@ -96,6 +98,8 @@ impl Params {
             k_half: 2.0,
             growth_cost: 0.5,
             forage_income: 1.0,
+            adapt_rate: 0.08,
+            atrophy: 0.03,
             exposure: 1.0,
             seed_tips: 12,
         }
@@ -311,6 +315,22 @@ pub fn transport_at(x: u32, y: u32, resource: &[f32], biomass: &[f32], p: &Param
         n += 1;
     }
     Flow { resource: ri + p.alpha * dr, flux }
+}
+
+/// T3 adaptation — the feedback that makes the network *intelligent*. Biomass
+/// thickens where resource throughput (accumulated `flux`) is high and atrophies
+/// everywhere slowly: `B' = max(0, B + adapt_rate·F − atrophy·B)`. High-traffic
+/// routes reinforce into cords; unused exploratory hyphae fade and prune. This is
+/// the Tero et al. (*Science* 2010) rule, in field form — it is what lets the
+/// network discover efficient supply routes (see the shortest-path proof test).
+#[inline]
+pub fn adapt_at(biomass: f32, flux: f32, p: &Params) -> f32 {
+    let b = biomass + p.adapt_rate * flux - p.atrophy * biomass;
+    if b > 0.0 {
+        b
+    } else {
+        0.0
+    }
 }
 
 /// Render math (tested Rust): biomass -> bioluminescent foxfire glow, remaining
@@ -570,6 +590,210 @@ mod tests {
         let expected = s.forage * p.forage_income - p.growth_cost;
         assert!((s.resource_delta - expected).abs() < 1e-5);
         assert!(s.resource_delta > 0.0, "rich food leaves surplus resource to transport");
+    }
+
+    // ---- T3: adaptive feedback + the shortest-path proof -------------------
+
+    #[test]
+    fn adaptation_thickens_on_flux_and_atrophies_without() {
+        let mut p = params();
+        p.adapt_rate = 0.1;
+        p.atrophy = 0.05;
+        // flux present: biomass grows
+        assert!(adapt_at(1.0, 4.0, &p) > 1.0, "throughput thickens the cord");
+        // no flux: biomass decays toward zero, but never below it
+        let mut b = 1.0;
+        for _ in 0..1000 {
+            b = adapt_at(b, 0.0, &p);
+        }
+        assert!(b >= 0.0 && b < 1e-3, "an unused hypha prunes away: {b}");
+        assert_eq!(adapt_at(0.0, 0.0, &p), 0.0);
+    }
+
+    #[test]
+    fn adaptive_network_chooses_the_shorter_route() {
+        // THE citable result (Tero et al., Science 2010, in field form): given two
+        // routes between a source and a sink, transport + adaptation reinforces the
+        // SHORT route and prunes the long one — the network "computes" the efficient
+        // path. Pure transport + adaptation, no tips (grow-free).
+        let mut p = Params::default_for(28, 28, 0);
+        p.alpha = 0.2;
+        p.k_half = 2.0;
+        p.adapt_rate = 0.08;
+        p.atrophy = 0.03;
+        let w = p.width as usize;
+        let n = p.cells() as usize;
+        let at = |x: usize, y: usize| y * w + x;
+
+        let mut biomass = vec![0.0f32; n];
+        let b0 = 1.0f32; // EQUAL seed on both routes — a fair race
+
+        let sx = 4usize;
+        let tx = 22usize;
+        let my = 14usize; // source/sink mid-line
+        let uy = 4usize; // the long route's detour height
+
+        // route A (short): straight line y = my, x = sx..=tx        (length 18)
+        let mut route_a = vec![];
+        for x in sx..=tx {
+            route_a.push(at(x, my));
+        }
+        // route B (long): up the left side, across the top, down the right (length ~38)
+        let mut route_b = vec![];
+        for y in (uy..=my).rev() {
+            route_b.push(at(sx, y));
+        }
+        for x in sx..=tx {
+            route_b.push(at(x, uy));
+        }
+        for y in uy..=my {
+            route_b.push(at(tx, y));
+        }
+        for &c in route_a.iter().chain(route_b.iter()) {
+            biomass[c] = b0;
+        }
+
+        let s = at(sx, my);
+        let t = at(tx, my);
+
+        // co-evolve the persistent resource field with the network
+        let mut resource = vec![0.0f32; n];
+        let k_iters = 8;
+        for _ in 0..120 {
+            let mut flux = vec![0.0f32; n];
+            for _ in 0..k_iters {
+                resource[s] = 10.0; // pinned source (Dirichlet high)
+                resource[t] = 0.0; // pinned sink  (Dirichlet low)
+                let mut next = resource.clone();
+                for y in 0..p.height {
+                    for x in 0..p.width {
+                        let f = transport_at(x, y, &resource, &biomass, &p);
+                        let i = (y * p.width + x) as usize;
+                        next[i] = f.resource;
+                        flux[i] += f.flux;
+                    }
+                }
+                resource = next;
+            }
+            for i in 0..n {
+                biomass[i] = adapt_at(biomass[i], flux[i], &p);
+            }
+        }
+
+        // compare interior biomass (exclude the shared S/T junctions)
+        let mean = |route: &[usize]| {
+            let mut sum = 0.0;
+            let mut cnt = 0.0;
+            for &c in route {
+                if c != s && c != t {
+                    sum += biomass[c];
+                    cnt += 1.0;
+                }
+            }
+            sum / cnt
+        };
+        let a = mean(&route_a);
+        let b = mean(&route_b);
+        // Measured: short ≈ 20.3, long ≈ 8.1 (ratio ≈ 0.40) — a decisive, not marginal, win.
+        assert!(a > b, "short route wins: short={a:.3} long={b:.3}");
+        assert!(a > b0, "the chosen route reinforced above its seed: {a:.3} vs {b0}");
+        assert!(b < a * 0.6, "the long route atrophied relative to the short: short={a:.3} long={b:.3}");
+    }
+
+    #[test]
+    fn equal_length_routes_do_not_separate() {
+        // CONTROL for the shortest-path proof: with two routes of EQUAL length the
+        // network must NOT pick a winner. If it did, the "it chooses the short path"
+        // result would be an iteration-order artifact, not real path optimization.
+        // Identical solver to the proof test; only the geometry (symmetric detours)
+        // differs. Same lesson that caught the NVIDIA false-positive: prove the
+        // mechanism, don't trust a single green assertion.
+        let mut p = Params::default_for(28, 28, 0);
+        p.alpha = 0.2;
+        p.k_half = 2.0;
+        p.adapt_rate = 0.08;
+        p.atrophy = 0.03;
+        let w = p.width as usize;
+        let n = p.cells() as usize;
+        let at = |x: usize, y: usize| y * w + x;
+
+        let mut biomass = vec![0.0f32; n];
+        let b0 = 1.0f32;
+        let sx = 4usize;
+        let tx = 22usize;
+        let my = 14usize;
+        let uy = 4usize; // top detour
+        let dy = 24usize; // bottom detour — mirror image, EQUAL length
+
+        // route U: up over the top and down
+        let mut route_u = vec![];
+        for y in (uy..=my).rev() {
+            route_u.push(at(sx, y));
+        }
+        for x in sx..=tx {
+            route_u.push(at(x, uy));
+        }
+        for y in uy..=my {
+            route_u.push(at(tx, y));
+        }
+        // route D: down under the bottom and up
+        let mut route_d = vec![];
+        for y in my..=dy {
+            route_d.push(at(sx, y));
+        }
+        for x in sx..=tx {
+            route_d.push(at(x, dy));
+        }
+        for y in (my..=dy).rev() {
+            route_d.push(at(tx, y));
+        }
+        for &c in route_u.iter().chain(route_d.iter()) {
+            biomass[c] = b0;
+        }
+
+        let s = at(sx, my);
+        let t = at(tx, my);
+        let mut resource = vec![0.0f32; n];
+        for _ in 0..120 {
+            let mut flux = vec![0.0f32; n];
+            for _ in 0..8 {
+                resource[s] = 10.0;
+                resource[t] = 0.0;
+                let mut next = resource.clone();
+                for y in 0..p.height {
+                    for x in 0..p.width {
+                        let f = transport_at(x, y, &resource, &biomass, &p);
+                        let i = (y * p.width + x) as usize;
+                        next[i] = f.resource;
+                        flux[i] += f.flux;
+                    }
+                }
+                resource = next;
+            }
+            for i in 0..n {
+                biomass[i] = adapt_at(biomass[i], flux[i], &p);
+            }
+        }
+
+        let mean = |route: &[usize]| {
+            let mut sum = 0.0;
+            let mut cnt = 0.0;
+            for &c in route {
+                if c != s && c != t {
+                    sum += biomass[c];
+                    cnt += 1.0;
+                }
+            }
+            sum / cnt
+        };
+        let u = mean(&route_u);
+        let d = mean(&route_d);
+        let spread = (u - d).abs() / u.max(d);
+        // Measured: u = d = 8.068, spread = 0.0000 — a perfect tie (pinned S/T make the
+        // parallel routes equilibrate independently by length; the row-major sweep adds
+        // no bias). Contrast the 2.5× gap when one route is genuinely shorter. The bound
+        // is generous on purpose; the real signal is unmistakable.
+        assert!(spread < 0.15, "equal routes should tie, got u={u:.3} d={d:.3} spread={spread:.3}");
     }
 
     #[test]

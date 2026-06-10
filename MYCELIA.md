@@ -96,9 +96,17 @@ cell: forage (income + deplete). Branch stochastically when resource-rich. Anast
       `mycelium_transport_cs` + the updated `mycelium_grow_cs` compile to SPIR-V **and
       transpile through naga to WGSL** (web path verified, "double-check trap" cleared).
       2026-06-10.
-- [ ] **T3 — Adaptive feedback + the shortest-path proof.** The `B += adapt·F − atrophy·B`
-      rule; cords form, dead ends prune. Ship the two-route shortest-path integration test
-      (the citable result). Tune stability (α, K, rates) on CPU.
+- [x] **T3 — Adaptive feedback + the shortest-path proof.** `adapt_at` — the Tero
+      `B += adapt_rate·F − atrophy·B` rule; cords reinforce on throughput, unused hyphae
+      prune. Shipped the **two-route shortest-path integration test** (the citable result):
+      a fair race (equal seed) between a short route and a 2× detour, transport + adaptation
+      only — the short route reinforces to **20.3**, the long to **8.1** (long/short ≈ 0.40),
+      a decisive, non-marginal win. **Plus a control** — two *equal-length* routes tie to
+      `spread = 0.0000` — proving the separation is length-driven, not a row-major iteration
+      artifact (the rigor that caught the NVIDIA false-positive). Pinned S/T make parallel
+      routes equilibrate independently by length, so the numbers cross-validate. Tuned
+      α=0.2, K=8, adapt_rate=0.08, atrophy=0.03 on CPU. `mycelium_adapt_cs` compiles to
+      SPIR-V + transpiles naga→WGSL. 15/15 mycelium tests green. 2026-06-10.
 - [ ] **T4 — GPU + page.** rust-gpu entries for grow/transport/adapt/render; WebGPU multi-pass
       pipeline (ping-pong resource, K transport sub-dispatches); bioluminescent render
       (biomass glow colony-hued, nutrient substrate warmth, resource glow along cords);

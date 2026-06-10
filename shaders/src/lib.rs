@@ -225,6 +225,26 @@ pub fn mycelium_transport_cs(
     flux[i] += f.flux;
 }
 
+/// T3 adaptation pass (Tero feedback): thicken/prune biomass from the flux the K
+/// transport iterations accumulated, then reset flux for the next frame. One
+/// thread per cell.
+#[spirv(compute(threads(8, 8)))]
+pub fn mycelium_adapt_cs(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &MycParams,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] biomass: &mut [f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] flux: &mut [f32],
+) {
+    let x = id.x;
+    let y = id.y;
+    if x >= params.width || y >= params.height {
+        return;
+    }
+    let i = (y * params.width + x) as usize;
+    biomass[i] = gpu_shared::mycelium::adapt_at(biomass[i], flux[i], params);
+    flux[i] = 0.0; // reset for next frame's transport accumulation
+}
+
 #[spirv(compute(threads(8, 8)))]
 pub fn mycelium_render_cs(
     #[spirv(global_invocation_id)] id: UVec3,
