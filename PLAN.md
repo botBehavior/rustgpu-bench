@@ -86,7 +86,10 @@ completed item with trailer `Co-Authored-By: Ferra <Ferra@Fable5>`. Rules of con
 
 ## Approvals (Carter writes lines here, e.g. `approved: E1 name=rustgpu-bench 2026-06-11`)
 
-(none yet)
+- approved: E1 name=rustgpu-bench (Carter in chat, 2026-06-10)
+- approved: E2 (Carter in chat, 2026-06-10)
+- approved: E3 (Carter in chat, 2026-06-10)
+- E4: NOT approved — Carter "unclear", awaiting decision
 
 ## Loop log (append one line per completed item: date, item, outcome)
 
