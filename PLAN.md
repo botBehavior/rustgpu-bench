@@ -122,30 +122,30 @@ under `cargo test`, a DX story WGSL structurally cannot tell.
       (hsv→rgb, sRGB encode/decode, Reinhard + ACES-fit tonemaps, IQ cosine palette).
       All `no_std`-compatible, SPIR-V-subset-safe (no checked math, no usize in data),
       unit tests for known values/ranges/symmetries. Workspace member; tests green.
-- [ ] H2. Prove it on GPU: 3-4 demo "fragment-style" compute entries in `shaders/`
+- [x] (2026-06-10 b952562: gallery-render gates all 4 vs CPU oracle, diffs 3e-8..2e-4, PNGs in assets/gallery) H2. Prove it on GPU: 3-4 demo "fragment-style" compute entries in `shaders/`
       (uv → color via shaderlib: SDF scene, FBM clouds, palette plasma), rendered to
       PNG via the existing runner plumbing; pixel-sanity vs CPU evaluation of the same
       functions (statistical gate as with the tracer). Commit images to assets/.
-- [ ] H3. Docs: rustdoc on every public fn, README section ("the shader library"),
+- [x] (2026-06-10 rustdoc inline throughout; README "Also in this repo" section) H3. Docs: rustdoc on every public fn, README section ("the shader library"),
       note in RESULTS/ANALYSIS if any kernel hits a subset edge worth recording.
 
 ## Phase I — "Rust Shadertoy" gallery (GREEN to build/deploy; announcing = RED)
 
 Original project #5, v1 = precompiled gallery (no server-side compile).
 
-- [ ] I1. 4-6 launch shaders built on shaderlib (plasma, FBM terrain-shaded clouds,
+- [x] (2026-06-10 four launched: plasma, amoeba, clouds, mandelbrot — shaderlib::gallery with tests) I1. 4-6 launch shaders built on shaderlib (plasma, FBM terrain-shaded clouds,
       SDF scene w/ soft shadows, raymarched blobs (the amoeba!), tunnel, mandelbrot),
       each a small `#[spirv]` entry + its Rust source displayed verbatim.
-- [ ] I2. `web/gallery.html`: thumbnail grid → click opens live WebGPU render with the
+- [x] (2026-06-10 live render + marker-extracted source pane + thumbnails; time uniform; wasm fallback skipped per spec) I2. `web/gallery.html`: thumbnail grid → click opens live WebGPU render with the
       Rust source side-by-side (sources shipped as text next to the page; entry picked
       per shader). Time uniform for animation. wasm-CPU fallback optional, skip if it
       drags.
-- [ ] I3. Headless verify (?auto beacons per entry), deploy to docs/ with cross-links
+- [x] (2026-06-10 headless: all four ~8 ms/frame, pixels sane; deployed to docs/ with cross-links both ways) I3. Headless verify (?auto beacons per entry), deploy to docs/ with cross-links
       from index + sim pages, README section. Announcing anywhere = RED.
 
 ## Phase J — what's next (proposal only)
 
-- [ ] J1. After H+I ship: write a "novel projects" slate (5+ ideas that do NOT retread
+- [x] (2026-06-10 drafts/novel-projects.md: 6 ideas, ranked, picks suggested — awaiting Carter) J1. After H+I ship: write a "novel projects" slate (5+ ideas that do NOT retread
       demo/benchmark/sim/library/gallery — think: things only this stack can do) into
       drafts/novel-projects.md for Carter to pick from. Proposal only.
 
@@ -166,3 +166,4 @@ Original project #5, v1 = precompiled gallery (no server-side compile).
 - 2026-06-10 F3+G1: Phase G (Physarum) green-lit and started; kernels + tests + entries committed (c1947e3). #614: 0 replies yet.
 - 2026-06-10 G2+G3: sim verified GPU-vs-CPU (1-agent bit-identical both paths); web sim live at /sim.html — 256k agents @ 12.4 ms/frame headless-verified, wasm fallback works. Only G4 (publish gate, RED) + E4 + F-watches remain.
 - 2026-06-10 H+I+J phases added (Carter: "complete both" + novel-projects slate after). H1 done (c7025ca): shaderlib with 13 tests, SPIR-V-proven via demo_plasma_cs.
+- 2026-06-10 H2–I3 (b952562): gallery shipped — 4 shaders CPU-oracle-gated (3e-8..2e-4), live at /gallery.html (~8 ms/frame headless-verified), source pane shows the actual library Rust. J1 slate drafted. ALL of projects #1-#5 from the original list now built. Remaining: RED gates (E4, G4, crates.io publish) + Carter's pick from novel-projects.md + F-watches.
