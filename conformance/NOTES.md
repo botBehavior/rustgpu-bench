@@ -39,8 +39,15 @@ minimized "deep chain → hang" repro would be the artifact to attach if filed.
 
 ## Coverage so far
 
-| grammar | functions tested | miscompiles | notes |
-|---|---|---|---|
-| integer/bool/shift/div/select/loop | ~24,000 | 2 (Class A) | bit-exact domain |
-| + cross-function calls (leaf callees) | campaign in progress | — | validates call lowering |
-| floats (ULP-classified) | not yet (P2) | — | the new-territory axis |
+| grammar | functions tested | comparisons | miscompiles | notes |
+|---|---|---|---|---|
+| integer/bool/shift/div/select/loop | ~24,000 | ~98M | 2 (Class A) | bit-exact domain |
+| + cross-function calls (leaf callees) | 1,440 | 5.9M | **0** | call lowering correct; ~178k call sites |
+| floats (ULP-classified) | not yet (P2) | — | — | the new-territory axis |
+
+**Conformance statement (2026-06-10):** across ~30M bit-exact comparisons over integer and
+cross-function-call programs, rust-gpu produced exactly **2 miscompiles, both one motif**
+(Class A). Cross-function call lowering and argument passing are correct at the tested scale.
+The bit-exact integer surface looks solid; the open frontier is floats (Class C, P2), where
+"miscompile" must be distinguished from legitimate ULP divergence. (Throughput note: the
+call grammar runs ~18 s/batch vs ~6 s integer-only — the must-inline legalizer's cost.)
