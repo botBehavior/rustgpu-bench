@@ -228,7 +228,224 @@ fn write_batch(fns: &[Node], dir: &std::path::Path) {
     std::fs::write(dir.join("src/lib.rs"), src).expect("write generated lib.rs");
 }
 
+// ---------- shrinker ----------
+
+fn size(n: &Node) -> u32 {
+    use Node::*;
+    match n {
+        X | Y | C(_) => 1,
+        Add(a, b) | Sub(a, b) | Mul(a, b) | And(a, b) | Or(a, b) | Xor(a, b) | Shl(a, b)
+        | Shr(a, b) | Div(a, b) | Rem(a, b) => 1 + size(a) + size(b),
+        Sel(a, b, t, f) => 1 + size(a) + size(b) + size(t) + size(f),
+        Loop(a, b, _) => 1 + size(a) + size(b),
+    }
+}
+
+/// All single-step simplifications: every subtree replaced by a leaf or by one
+/// of its own children (hoisting). Sorted smallest-first by the caller.
+fn simplifications(n: &Node) -> Vec<Node> {
+    fn subtree_count(n: &Node) -> u32 {
+        size(n)
+    }
+    fn replace(n: &Node, target: &mut u32, with: &dyn Fn(&Node) -> Vec<Node>, acc: &mut Vec<Node>, root: &Node) {
+        // generate replacements for the subtree at pre-order index *target
+        fn walk(n: &Node, idx: &mut u32, target: u32, out: &mut Vec<(u32, Node)>) {
+            let my = *idx;
+            *idx += 1;
+            if my == target {
+                out.push((my, n.clone()));
+                return;
+            }
+            use Node::*;
+            match n {
+                X | Y | C(_) => {}
+                Add(a, b) | Sub(a, b) | Mul(a, b) | And(a, b) | Or(a, b) | Xor(a, b)
+                | Shl(a, b) | Shr(a, b) | Div(a, b) | Rem(a, b) | Loop(a, b, _) => {
+                    walk(a, idx, target, out);
+                    walk(b, idx, target, out);
+                }
+                Sel(a, b, t, f) => {
+                    walk(a, idx, target, out);
+                    walk(b, idx, target, out);
+                    walk(t, idx, target, out);
+                    walk(f, idx, target, out);
+                }
+            }
+        }
+        fn rebuild(n: &Node, idx: &mut u32, target: u32, repl: &Node) -> Node {
+            let my = *idx;
+            *idx += 1;
+            if my == target {
+                return repl.clone();
+            }
+            use Node::*;
+            macro_rules! r {
+                ($a:expr) => {
+                    Box::new(rebuild($a, idx, target, repl))
+                };
+            }
+            match n {
+                X => X,
+                Y => Y,
+                C(v) => C(*v),
+                Add(a, b) => Add(r!(a), r!(b)),
+                Sub(a, b) => Sub(r!(a), r!(b)),
+                Mul(a, b) => Mul(r!(a), r!(b)),
+                And(a, b) => And(r!(a), r!(b)),
+                Or(a, b) => Or(r!(a), r!(b)),
+                Xor(a, b) => Xor(r!(a), r!(b)),
+                Shl(a, b) => Shl(r!(a), r!(b)),
+                Shr(a, b) => Shr(r!(a), r!(b)),
+                Div(a, b) => Div(r!(a), r!(b)),
+                Rem(a, b) => Rem(r!(a), r!(b)),
+                Sel(a, b, t, f) => Sel(r!(a), r!(b), r!(t), r!(f)),
+                Loop(a, b, k) => Loop(r!(a), r!(b), *k),
+            }
+        }
+        let total = subtree_count(root);
+        for t in 0..total {
+            let mut found = Vec::new();
+            let mut i = 0u32;
+            walk(root, &mut i, t, &mut found);
+            if let Some((_, sub)) = found.pop() {
+                if matches!(sub, Node::X | Node::Y) {
+                    continue;
+                }
+                for cand in with(&sub) {
+                    let mut i = 0u32;
+                    acc.push(rebuild(root, &mut i, t, &cand));
+                }
+            }
+        }
+        let _ = target;
+    }
+    let mut out = Vec::new();
+    let mut zero = 0u32;
+    replace(
+        n,
+        &mut zero,
+        &|sub: &Node| {
+            use Node::*;
+            let mut v = vec![X, Y, C(0)];
+            match sub {
+                Add(a, b) | Sub(a, b) | Mul(a, b) | And(a, b) | Or(a, b) | Xor(a, b)
+                | Shl(a, b) | Shr(a, b) | Div(a, b) | Rem(a, b) | Loop(a, b, _) => {
+                    v.push((**a).clone());
+                    v.push((**b).clone());
+                }
+                Sel(a, b, t, f) => {
+                    v.push((**a).clone());
+                    v.push((**b).clone());
+                    v.push((**t).clone());
+                    v.push((**f).clone());
+                }
+                _ => {}
+            }
+            v
+        },
+        &mut out,
+        n,
+    );
+    out
+}
+
+fn any_mismatch(gpu_out: &[u32], f: &Node, seed: u32, slot: usize) -> bool {
+    for ii in 0..N_INPUTS {
+        let x = lcg(seed ^ ii);
+        let y = lcg(x);
+        if interp(f, x, y) != gpu_out[slot * N_INPUTS as usize + ii as usize] {
+            return true;
+        }
+    }
+    false
+}
+
+fn shrink(seed: u32, fn_idx: usize, root: &std::path::Path, gpu: &GpuCtx) {
+    let fuzz_dir = root.join("fuzz-shaders");
+    let spv_path = fuzz_dir.join("spv/fuzz_shaders.spv");
+    let mut rng = Rng(if seed == 0 { 0xDEAD_BEEF } else { lcg(seed) });
+    let fns: Vec<Node> = (0..N_FNS).map(|_| gen(&mut rng, 0)).collect();
+    let mut best = fns[fn_idx].clone();
+    println!("shrinking seed {seed} fn {fn_idx}: start size {}", size(&best));
+
+    loop {
+        let mut cands = simplifications(&best);
+        cands.sort_by_key(size);
+        cands.truncate(160); // cap probes per round
+        let mut improved = false;
+        for chunk in cands.chunks(N_FNS as usize) {
+            write_batch(chunk, &fuzz_dir);
+            let ok = Command::new("cargo")
+                .args(["gpu", "build", "--shader-crate", fuzz_dir.to_str().unwrap(),
+                       "--output-dir", fuzz_dir.join("spv").to_str().unwrap(),
+                       "--auto-install-rust-toolchain"])
+                .current_dir(root)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if !ok {
+                continue;
+            }
+            let spv = std::fs::read(&spv_path).expect("spv");
+            let out = run_gpu(gpu, &spv, seed, chunk.len() as u32);
+            for (slot, cand) in chunk.iter().enumerate() {
+                if any_mismatch(&out, cand, seed, slot) {
+                    best = cand.clone();
+                    improved = true;
+                    println!("  -> size {}", size(&best));
+                    break;
+                }
+            }
+            if improved {
+                break;
+            }
+        }
+        if !improved {
+            break;
+        }
+    }
+
+    let mut src = String::new();
+    emit(&best, &mut src);
+    // find a concrete failing input for the minimized form
+    write_batch(std::slice::from_ref(&best), &fuzz_dir);
+    Command::new("cargo")
+        .args(["gpu", "build", "--shader-crate", fuzz_dir.to_str().unwrap(),
+               "--output-dir", fuzz_dir.join("spv").to_str().unwrap(),
+               "--auto-install-rust-toolchain"])
+        .current_dir(root)
+        .output()
+        .ok();
+    let spv = std::fs::read(&spv_path).expect("spv");
+    let out = run_gpu(gpu, &spv, seed, 1);
+    let mut example = (0u32, 0u32, 0u32, 0u32);
+    for ii in 0..N_INPUTS {
+        let x = lcg(seed ^ ii);
+        let y = lcg(x);
+        let cpu = interp(&best, x, y);
+        if cpu != out[ii as usize] {
+            example = (x, y, cpu, out[ii as usize]);
+            break;
+        }
+    }
+    let path = root.join(format!("findings/min-seed{seed}-fn{fn_idx}.rs"));
+    std::fs::write(&path, format!(
+        "// MINIMIZED rust-gpu miscompile repro (size {} nodes)\n// x={} y={}: native/interp = {}, GPU (passthrough AND naga paths) = {}\npub fn repro(x: u32, y: u32) -> u32 {{ {src} }}\nfn main() {{ assert_eq!(repro({}, {}), {}u32); }}\n",
+        size(&best), example.0, example.1, example.2, example.3, example.0, example.1, example.2
+    )).expect("write minimized");
+    println!("minimized -> {} (size {})\n{src}", path.display(), size(&best));
+}
+
 fn main() {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.first().map(|s| s.as_str()) == Some("--shrink") {
+        let seed: u32 = argv[1].parse().expect("seed");
+        let fn_idx: usize = argv[2].parse().expect("fn idx");
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let gpu = pollster::block_on(init_gpu());
+        shrink(seed, fn_idx, &root, &gpu);
+        return;
+    }
     let args: Vec<u32> = std::env::args().skip(1).filter_map(|a| a.parse().ok()).collect();
     let batches = *args.first().unwrap_or(&1);
     let seed0 = *args.get(1).unwrap_or(&1);
