@@ -317,7 +317,7 @@ fn simplifications(n: &Node) -> Vec<Node> {
     fn subtree_count(n: &Node) -> u32 {
         size(n)
     }
-    fn replace(n: &Node, target: &mut u32, with: &dyn Fn(&Node) -> Vec<Node>, acc: &mut Vec<Node>, root: &Node) {
+    fn replace(_n: &Node, target: &mut u32, with: &dyn Fn(&Node) -> Vec<Node>, acc: &mut Vec<Node>, root: &Node) {
         // generate replacements for the subtree at pre-order index *target
         fn walk(n: &Node, idx: &mut u32, target: u32, out: &mut Vec<(u32, Node)>) {
             let my = *idx;
@@ -857,6 +857,9 @@ fn finterp(n: &FNode, x: f32, y: f32) -> f32 {
     }
 }
 
+// used once a float shrinker lands (P2 has no float minimizer yet — float
+// findings ship as the campaign's standalone repro)
+#[allow(dead_code)]
 fn fsize(n: &FNode) -> u32 {
     use FNode::*;
     match n {

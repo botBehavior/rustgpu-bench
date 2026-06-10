@@ -39,11 +39,12 @@ minimized "deep chain → hang" repro would be the artifact to attach if filed.
 
 ## Coverage so far
 
-| grammar | functions tested | comparisons | miscompiles | notes |
+| grammar | functions | comparisons | miscompiles | notes |
 |---|---|---|---|---|
-| integer/bool/shift/div/select/loop | ~24,000 | ~98M | 2 (Class A) | bit-exact domain |
-| + cross-function calls (leaf callees) | 1,440 | 5.9M | **0** | call lowering correct; ~178k call sites |
-| floats (fraction-classified) | campaign running | — | — | see Class C method below |
+| integer/bool/shift/div/select/loop | ~24,000 | ~98M | **2** (Class A) | bit-exact |
+| + cross-function calls (leaf callees) | 1,440 | 5.9M | 0 | call lowering correct; ~178k call sites |
+| float arithmetic (fraction-classified) | 960 | 3.9M | 0 | exact-ish ops; worst legit divergence 10% of inputs |
+| **total** | **~26,400** | **~108M** | **2** | one shared motif |
 
 ## Class C — float arithmetic (method; `--float`)
 
@@ -67,9 +68,16 @@ The working classifier is **per-function and statistical**, not per-input:
 Limits (honest): input-range-specific miscompiles below the 25% fraction would be missed;
 inf/NaN/subnormal/transcendental behavior is out of scope for v1 and is its own future axis.
 
-**Conformance statement (2026-06-10):** across ~30M bit-exact comparisons over integer and
-cross-function-call programs, rust-gpu produced exactly **2 miscompiles, both one motif**
-(Class A). Cross-function call lowering and argument passing are correct at the tested scale.
-The bit-exact integer surface looks solid; the open frontier is floats (Class C, P2), where
-"miscompile" must be distinguished from legitimate ULP divergence. (Throughput note: the
-call grammar runs ~18 s/batch vs ~6 s integer-only — the must-inline legalizer's cost.)
+**Defect-density statement (2026-06-10).** Across **~108 million** differential comparisons
+spanning integer/bitwise/control-flow, cross-function-call, and float-arithmetic programs,
+rust-gpu 0.10.0-alpha.1 produced exactly **2 miscompiles, both the same Class-A
+comparison-fold motif**. Both are triple-confirmed: native rustc agrees with the AST
+interpreter (the CPU value is ground truth), and both reproduce with identical wrong values
+through *both* the SPIR-V passthrough and naga frontends (two independent consumers agree the
+GPU is wrong). Cross-function call lowering, argument passing, and exact-ish float arithmetic
+showed **no** miscompiles at this scale — a strong correctness signal for the audited surface.
+Untested frontier: structs/enums, transcendentals, inf/NaN/subnormal floats, and range-
+specific bugs below the 25%-fraction float gate.
+
+Throughput: integer ~6 s/batch, float ~6 s/batch, calls ~18 s/batch (the must-inline
+legalizer). Deterministic regression sweep: `conformance/ci.sh`.

@@ -277,11 +277,11 @@ a categorized bug corpus + CI-shaped harness, offered against rust-gpu #315. Spe
 
 - [x] (2026-06-10 270d68e/fdb6206: cross-function calls added (leaf callees, depth-1 inline); campaign 1440 fns / 5.9M cmp / 0 findings — call lowering correct; deep-chain inlining hang = Class B in conformance/NOTES.md. structs/match/early-return deferred — P2 floats is higher-value new territory) P1. Widen the integer grammar: function calls (cross-fn inlining = riskiest
       legalizer path), nested structs, `match`, early returns. Run a campaign; auto-bisect findings.
-- [ ] P2. Float domain: f32 ops with ULP-tolerant comparison + a divergence classifier
+- [x] (2026-06-10 2065eeb: --float mode, exact-ish grammar, per-function statistical classifier (>25% of inputs >1% rel); calibrated worst-legit 0.163; campaign 3.9M cmp / 0 findings; transcendentals excluded as driver-defined) P2. Float domain: f32 ops with ULP-tolerant comparison + a divergence classifier
       (separate miscompile from legitimate fma/transcendental ulp). The new-territory axis.
-- [ ] P3. Scale + triage: large multi-seed campaign; cluster findings by motif; build
+- [x] (2026-06-10: 2 confirmed Class-A repros re-validated — native rustc agrees with interpreter (PASSES), both reproduce through passthrough AND naga; corpus = conformance/NOTES.md with motif clustering + the 2 repros in findings/) P3. Scale + triage: large multi-seed campaign; cluster findings by motif; build
       `conformance/` corpus (minimized repro + failing input + native-rustc expected value).
-- [ ] P4. CI-shaped runner (deterministic seed list, fast subset) + defect-density writeup.
+- [x] (2026-06-10: conformance/ci.sh deterministic regression sweep (exit 2 on any finding); defect-density statement in NOTES.md — ~108M comparisons across 3 grammars, 2 miscompiles/1 motif) P4. CI-shaped runner (deterministic seed list, fast subset) + defect-density writeup.
 - [ ] P5. [RED per item] Upstream: file confirmed bug classes; offer the harness to #315.
 
 ## Approvals (Carter writes lines here, e.g. `approved: E1 name=rustgpu-bench 2026-06-11`)
