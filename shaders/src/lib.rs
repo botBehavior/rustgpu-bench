@@ -155,6 +155,66 @@ pub fn mycelia_render_cs(
     out[i as usize] = r | (g << 8) | (b << 16) | (255u32 << 24);
 }
 
+// ---------------- Mycelium: adaptive fungal ecosystem ----------------
+use gpu_shared::mycelium::{Params as MycParams, Tip as MycTip};
+
+#[spirv(compute(threads(64)))]
+pub fn mycelium_spawn_cs(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &MycParams,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] tips: &mut [MycTip],
+) {
+    let i = id.x;
+    if i < params.n_tips {
+        tips[i as usize] = gpu_shared::mycelium::spawn_tip(i, params.seed_tips, params);
+    }
+}
+
+#[spirv(compute(threads(64)))]
+pub fn mycelium_grow_cs(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &MycParams,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] tips: &mut [MycTip],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] nutrient: &mut [f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] biomass: &mut [f32],
+) {
+    let i = id.x;
+    if i >= params.n_tips {
+        return;
+    }
+    let tip = tips[i as usize];
+    if tip.alive == 0.0 {
+        return;
+    }
+    let step = gpu_shared::mycelium::grow_tip(&tip, nutrient, biomass, params, i);
+    tips[i as usize] = step.tip;
+    biomass[step.cell as usize] += params.deposit; // non-atomic deposit
+    let n = nutrient[step.cell as usize] - params.forage_rate;
+    nutrient[step.cell as usize] = if n > 0.0 { n } else { 0.0 };
+    // branch append (atomic counter) is wired in T4
+}
+
+#[spirv(compute(threads(8, 8)))]
+pub fn mycelium_render_cs(
+    #[spirv(global_invocation_id)] id: UVec3,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] params: &MycParams,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] nutrient: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] biomass: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] out: &mut [u32],
+) {
+    let x = id.x;
+    let y = id.y;
+    if x >= params.width || y >= params.height {
+        return;
+    }
+    let i = (y * params.width + x) as usize;
+    let col = gpu_shared::mycelium::shade(biomass[i], nutrient[i], params.exposure);
+    let r = (col.x * 255.0) as u32;
+    let g = (col.y * 255.0) as u32;
+    let b = (col.z * 255.0) as u32;
+    out[i] = r | (g << 8) | (b << 16) | (255u32 << 24);
+}
+
 #[spirv(compute(threads(8, 8)))]
 pub fn render_cs(
     #[spirv(global_invocation_id)] id: UVec3,

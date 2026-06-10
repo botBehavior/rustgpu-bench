@@ -79,11 +79,12 @@ cell: forage (income + deplete). Branch stochastically when resource-rich. Anast
 
 ## Build phases
 
-- [ ] **T1 — Organism foundation.** New kernel module (`shared/src/mycelium.rs`): Tip + a
-      single-colony model with `nutrient` + `biomass`, chemotropic tip growth that deposits
-      permanent biomass and consumes nutrient, branching + anastomosis. CPU tests (growth
-      deterministic/in-bounds, branch spawns, anastomosis terminates, nutrient depletes).
-      Already richer than physarum: a growing, foraging, branching network.
+- [x] **T1 — Organism foundation.** `shared/src/mycelium.rs`: Tip (6×f32), single-colony
+      chemotropic growth (Jones steer toward nutrient), permanent biomass deposit, foraging
+      depletion, branching (deterministic, returns child via `Step`), anastomosis (fuse on
+      thick biomass ahead), radial spore inoculation, tested `shade()` (foxfire glow). 6 CPU
+      tests green. GPU entries `mycelium_spawn/grow/render_cs` compile to SPIR-V (Step struct
+      lowers fine). Branch-append (atomic) deferred to T4 per note.
 - [ ] **T2 — The transport solver.** Add `resource` + `flux`; the biomass-weighted relaxation
       iteration; tip growth becomes resource-limited (consume R, forage income). CPU tests:
       one iteration conserves R (no source/sink), resource flows source→sink along biomass.

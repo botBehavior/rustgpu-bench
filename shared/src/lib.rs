@@ -12,6 +12,7 @@ use glam::{vec3, Vec3};
 pub mod collatz;
 pub mod matmul;
 pub mod mycelia;
+pub mod mycelium;
 pub mod physarum;
 pub mod rng;
 pub mod tracer_v2;
