@@ -79,8 +79,36 @@ completed item with trailer `Co-Authored-By: Ferra <Ferra@Fable5>`. Rules of con
 - [ ] F2. Thread watch (only after E3): check our issue thread for maintainer replies;
       respond in-thread promptly (GREEN within an approved thread), flag anything
       substantive to Carter.
-- [ ] F3. Propose the Phase-2 plan for project #4 (sim toy) as a new PLAN section —
+- [x] (2026-06-10 Phase G written; Carter green-lit in chat: "3") F3. Propose the Phase-2 plan for project #4 (sim toy) as a new PLAN section —
       proposal only, Carter green-lights scope.
+
+## Phase G — the sim toy: Physarum slime mold (GREEN except G4)
+
+Scope approved by Carter 2026-06-10. Lives in this repo/workspace (shares all plumbing;
+extraction to its own repo can be decided at the G4 gate). Hundreds of thousands of
+agents: sense trail → steer → move → deposit; trail diffuses + decays; render the trail.
+Web page is the primary artifact; everything kernel-side is shared Rust, tested on CPU.
+
+- [ ] G1. `shared/src/physarum.rs`: Agent + SimParams (`#[repr(C)]`, u32/f32 only),
+      agent-update kernel (sense L/C/R, steer, move, wrap, deposit) and diffuse+decay
+      kernel as pure functions; unit tests (determinism, wrap, decay bounds, steering).
+      v1 uses non-atomic deposits — races lose a few deposits visually, fine; determinism
+      verified at single-agent level (note this honestly). `#[spirv]` entries:
+      `physarum_update_cs`, `physarum_diffuse_cs` (ping-pong trail buffers).
+- [ ] G2. GPU verify: extend a runner (or small sim-verify bin) to run 1 agent + diffuse
+      N steps on GPU vs CPU, exact/statistical compare per kernel; plus a multi-agent
+      smoke (total trail mass sanity). Commit with tests green.
+- [ ] G3. Web page `web/sim.html`: WebGPU, three dispatches per frame
+      (update → diffuse → present), trail presented via canvas (fullscreen pass or
+      ImageData readback — pick what ships, note the choice), controls (agent count,
+      speed/turn/sensor sliders, decay, pause/reset, fps + agents/sec readout), wasm-CPU
+      fallback mode at small N for the same one-source story. Headless-Chrome verify
+      with beacons (reuse the ?auto pattern), then copy into docs/ alongside the bench
+      demo with cross-links.
+- [ ] G4. Publish gate [RED]: announce/link the sim (README section + Pages index link
+      are GREEN once verified; anything outward — social, posts, upstream mention —
+      needs an Approvals line). Also decide: keep in rustgpu-bench or extract to its own
+      repo.
 
 ## Approvals (Carter writes lines here, e.g. `approved: E1 name=rustgpu-bench 2026-06-11`)
 

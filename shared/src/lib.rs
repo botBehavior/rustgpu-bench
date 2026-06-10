@@ -11,6 +11,7 @@ use glam::{vec3, Vec3};
 
 pub mod collatz;
 pub mod matmul;
+pub mod physarum;
 pub mod rng;
 pub mod tracer_v2;
 
