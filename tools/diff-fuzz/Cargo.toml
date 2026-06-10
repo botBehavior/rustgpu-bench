@@ -1,0 +1,9 @@
+[package]
+name = "diff-fuzz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wgpu = { version = "29", features = ["spirv"] }
+pollster = "0.4"
+bytemuck = "1"

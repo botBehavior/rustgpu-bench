@@ -8,3 +8,5 @@ hand-*.spv
 /web/runner_web.wasm
 /web/kernels.wgsl
 /drafts/
+/fuzz-shaders/spv/
+/fuzz-findings/
