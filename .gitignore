@@ -1,0 +1,8 @@
+/target
+out-*.ppm
+out-*.png
+/shaders/spv/
+/shaders/wgsl/
+/web/runner_web.wasm
+/web/kernels.wgsl
+/drafts/

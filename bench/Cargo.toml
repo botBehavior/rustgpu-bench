@@ -1,0 +1,10 @@
+[package]
+name = "bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gpu-shared = { path = "../shared" }
+wgpu = { version = "29", features = ["spirv"] }
+pollster = "0.4"
+bytemuck = "1"

@@ -1,0 +1,93 @@
+# PLAN — ship the rust-gpu demo + benchmark properly
+
+Loop protocol: pick the **first unchecked, unblocked** item top-to-bottom. GREEN items:
+do them. YELLOW items: produce the artifact in `drafts/`, never send. RED items: skipped
+until the matching line appears in the **Approvals** section at the bottom (Carter writes
+it, or says it in chat). Check items off as `[x] (YYYY-MM-DD note)`. Commit after every
+completed item with trailer `Co-Authored-By: Ferra <Ferra@Fable5>`. Rules of conduct:
+`../docs/ETIQUETTE.md` (in rustGuru) — absolute.
+
+## Phase A — version control foundation (GREEN)
+
+- [ ] A1. `git init` in `gpu/` (rustGuru root stays a non-repo; gpu/ is self-contained).
+      `.gitignore`: `target/`, `out-*.ppm`, `shaders/spv/`, `shaders/wgsl/`,
+      `web/runner_web.wasm`, `web/kernels.wgsl`, `drafts/` (drafts stay local-only).
+      Keep: all sources, `Cargo.lock`, `RESULTS.md`, `bench-results.json`, `PLAN.md`.
+- [ ] A2. Initial commit (whole workspace, building + tests green first). Then tag
+      `bench-2026-06-10` on the commit containing today's bench-results.json.
+- [ ] A3. README.md for the repo: what it is (tri-target demo + first rust-gpu vs
+      hand-WGSL benchmark), results table, repro commands, gotcha list, honest caveats.
+      Written for eventual public eyes, lives private until E1.
+
+## Phase B — explain the 1.84× tracer gap (GREEN)
+
+- [ ] B1. Get a SPIR-V disassembler working (try in order: `spirv-dis` from an installed
+      Vulkan SDK; `cargo install spirv-tools` if it ships bins; else a 20-line bin crate
+      on `rspirv` that dumps opcode histograms). Produce opcode histograms for `render_cs`
+      from (a) the rust-gpu .spv and (b) the hand-WGSL compiled to SPIR-V via `naga`.
+- [ ] B2. Structural diff: transpiled-rust-gpu WGSL (`web/kernels.wgsl`) vs hand
+      `shaders-wgsl/render.wgsl` — count branches, temporaries, bounds checks, loop
+      shapes. Record concrete differences, not impressions.
+- [ ] B3. Hypothesis micro-tests (one kernel each, added to bench as optional workloads):
+      (a) transcendental-heavy loop (sin/cos/sqrt torture) rust-gpu vs hand-WGSL —
+      isolates math-function lowering; (b) slice-indexing-heavy loop vs the same logic
+      with iterator/`get_unchecked` (if rust-gpu accepts it) — isolates bounds checks;
+      (c) struct-returning function chain — isolates the Sphere/Hit struct pattern.
+- [ ] B4. Try the experimental qptr pipeline on the tracer
+      (`RUSTGPU_CODEGEN_ARGS="--no-infer-storage-classes --spirt-passes=qptr"` — find the
+      cargo-gpu way to pass it; if it builds, bench it; if not, record the failure mode).
+- [ ] B5. Write `gpu/ANALYSIS.md`: which hypothesis(es) the data confirms/refutes, with
+      numbers. Update RESULTS.md's "candidate causes" paragraph to match the evidence.
+      Commit + tag `analysis-<date>`.
+
+## Phase C — hardening for publication (GREEN)
+
+- [ ] C1. Cold-repro test: clone the gpu repo to a temp dir, follow README verbatim in a
+      fresh shell, confirm every command works (this catches absolute paths, missing
+      steps, the cargo-gpu stub trap). Fix whatever breaks.
+- [ ] C2. Browser steady-state timing: extend web `?auto` mode to render N=10 GPU frames
+      and report first-frame (compile-included) vs steady-state median separately.
+      Re-run headless Chrome, record both numbers in RESULTS.md.
+- [ ] C3. Demo polish: PNG export of the render for the README (convert out-gpu.ppm),
+      final copy pass on index.html, verify the page works from a plain
+      `python -m http.server` per README.
+
+## Phase D — publication drafts (YELLOW → drafts/, never sent)
+
+- [ ] D1. `drafts/upstream-issue.md`: rust-gpu repo discussion/issue draft — benchmark
+      methodology, results table, B-phase findings, repro link (assumes E1 done; leave
+      the URL as a placeholder). One reproducible claim, peer-engineer tone, AI
+      assistance disclosed.
+- [ ] D2. `drafts/blog-post.md`: the tri-target story ("one function, four targets") +
+      benchmark, honest-edges framing per ETIQUETTE.
+- [ ] D3. `drafts/social.md`: 2-3 short blurb variants linking post + repo.
+- [ ] D4. Notify Carter: drafts ready for review (summarize in chat at next interaction;
+      list what each RED gate would do).
+
+## Phase E — RED gates (each needs an Approvals line below)
+
+- [ ] E1. Create public repo `botBehavior/<name>` (Carter picks name at approval;
+      suggestions: `rust-gpu-four-targets`, `one-fn-four-targets`, `rustgpu-bench`),
+      push, verify it renders correctly on github.com. [RED]
+- [ ] E2. GitHub Pages for the web demo from the public repo; verify live URL. [RED]
+- [ ] E3. File the upstream issue/discussion from D1 (with live links). [RED]
+- [ ] E4. Publish the post (venue per Carter at approval). [RED]
+
+## Phase F — steady state (GREEN, after E-phase items land)
+
+- [ ] F1. Release watch: check rust-gpu releases/tags on each loop pass; on a new
+      release, re-pin, rebuild, re-run bench, append a row to a tracking table in
+      RESULTS.md, commit, tag.
+- [ ] F2. Thread watch (only after E3): check our issue thread for maintainer replies;
+      respond in-thread promptly (GREEN within an approved thread), flag anything
+      substantive to Carter.
+- [ ] F3. Propose the Phase-2 plan for project #4 (sim toy) as a new PLAN section —
+      proposal only, Carter green-lights scope.
+
+## Approvals (Carter writes lines here, e.g. `approved: E1 name=rustgpu-bench 2026-06-11`)
+
+(none yet)
+
+## Loop log (append one line per completed item: date, item, outcome)
+
+(none yet)
