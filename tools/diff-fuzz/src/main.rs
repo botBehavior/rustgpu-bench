@@ -343,9 +343,14 @@ async fn init_gpu() -> GpuCtx {
         })
         .await
         .expect("no adapter");
-    let passthrough = adapter
-        .features()
-        .contains(wgpu::Features::PASSTHROUGH_SHADERS);
+    let passthrough = std::env::var("DIFF_FUZZ_NAGA").is_err()
+        && adapter
+            .features()
+            .contains(wgpu::Features::PASSTHROUGH_SHADERS);
+    println!(
+        "shader path: {}",
+        if passthrough { "passthrough" } else { "naga frontend" }
+    );
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: None,
